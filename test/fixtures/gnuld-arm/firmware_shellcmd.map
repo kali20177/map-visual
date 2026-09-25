@@ -1,0 +1,73 @@
+
+There are no discarded input sections
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x00020000         xr
+RAM              0x20000000         0x00005000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD shell_cmd.o
+START GROUP
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/libgcc.a
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/../../../../arm-none-eabi/lib/thumb/v7-m/nofp/libc.a
+END GROUP
+
+.text           0x08000000       0x2c
+ *(.text*)
+ .text          0x08000000        0xa shell_cmd.o
+                0x08000006                main
+ *(shellCommand)
+ *fill*         0x0800000a        0x2 
+ shellCommand   0x0800000c       0x10 shell_cmd.o
+                0x0800000c                shell_commands
+ *(.rodata*)
+ .rodata.str1.4
+                0x0800001c        0xd shell_cmd.o
+                0x0800002c                        . = ALIGN (0x4)
+ *fill*         0x08000029        0x3 
+                0x0800002c                        _etext = .
+
+.glue_7         0x0800002c        0x0
+ .glue_7        0x0800002c        0x0 linker stubs
+
+.glue_7t        0x0800002c        0x0
+ .glue_7t       0x0800002c        0x0 linker stubs
+
+.vfp11_veneer   0x0800002c        0x0
+ .vfp11_veneer  0x0800002c        0x0 linker stubs
+
+.v4_bx          0x0800002c        0x0
+ .v4_bx         0x0800002c        0x0 linker stubs
+
+.iplt           0x0800002c        0x0
+ .iplt          0x0800002c        0x0 shell_cmd.o
+
+.rel.dyn        0x0800002c        0x0
+ .rel.iplt      0x0800002c        0x0 shell_cmd.o
+
+.data           0x20000000        0x0 load address 0x0800002c
+ *(.data*)
+ .data          0x20000000        0x0 shell_cmd.o
+
+.igot.plt       0x20000000        0x0 load address 0x0800002c
+ .igot.plt      0x20000000        0x0 shell_cmd.o
+
+.bss            0x20000000        0x0 load address 0x0800002c
+ *(.bss*)
+ .bss           0x20000000        0x0 shell_cmd.o
+ *(COMMON)
+OUTPUT(firmware_shellcmd.elf elf32-littlearm)
+LOAD linker stubs
+
+.comment        0x00000000       0x45
+ .comment       0x00000000       0x45 shell_cmd.o
+                                 0x46 (size before relaxing)
+
+.ARM.attributes
+                0x00000000       0x2d
+ .ARM.attributes
+                0x00000000       0x2d shell_cmd.o

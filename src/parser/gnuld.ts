@@ -11,9 +11,10 @@ import type { Warnings } from './warnings';
 
 const OUTPUT_SECTION_RE =
     /^(\.[^\s]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+load address\s+0x([0-9a-fA-F]+))?(?:\s*\(size before (?:relaxing|filtering) 0x[0-9a-fA-F]+\))?(?:\s+[a-zA-Z].*)?\s*$/;
-// COMMON / LARGE_COMMON contributions appear under `-fcommon` and carry no
-// leading dot — classifySection maps both to bss.
-const CONTRIBUTION_RE = /^\s+((?:\.[^\s]+)|COMMON|LARGE_COMMON)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
+// Section tokens usually start with '.', but scripts collect plain names too
+// (`*(shellCommand)` for `__attribute__((section("shellCommand")))` data) and
+// COMMON / LARGE_COMMON carry no dot at all.
+const CONTRIBUTION_RE = /^\s+([A-Za-z_.][^\s]*)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const CONTINUATION_RE = /^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const SECTION_NAME_RE = /^\s+(\.[^\s]+)\s*$/;
 const SYMBOL_RE = /^\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
@@ -24,6 +25,9 @@ const DISCARDED_CONT_RE = /^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(\S+)\s*$/;
 const REGION_RE = /^(\S+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+(\S+))?\s*$/;
 const ARCHIVE_MEMBER_RE = /^(.*\.a)\((.+)\)$/;
 const HEX_ONLY_RE = /^0x[0-9a-fA-F]+$/;
+// wildcard/object-list echo: `*(.text*)`, `*crtbegin.o(.ctors)`, `libc.a(*)` —
+// always carries parentheses and never an address
+const WILDCARD_ECHO_RE = /^[^\s(]*\([^\s]*\)\s*$/;
 
 interface PendingSymbol {
     addr: number;
@@ -43,7 +47,27 @@ interface FillEntry {
     vma: number;
     size: number;
     section: string;
+    /** Load address of the surrounding output section (initialized sections only). */
+    lma: number | null;
 }
+
+type OutUnit = { kind: 'group'; group: Contribution } | { kind: 'fill'; fill: FillEntry };
+
+/**
+ * Buffered content of one output section header. Units are resolved when the
+ * section closes: the real content is the chain of contributions + fills that
+ * tiles [vma, vma+size) exactly — anything else on the lines is a stale
+ * pre-merge/pre-relax snapshot re-printed by ld under LTO and must be dropped.
+ */
+interface OutSection {
+    name: string;
+    vma: number | null;
+    size: number | null;
+    units: OutUnit[];
+}
+
+const unitVma = (u: OutUnit): number => (u.kind === 'group' ? u.group.vma : u.fill.vma);
+const unitSize = (u: OutUnit): number => (u.kind === 'group' ? u.group.size : u.fill.size);
 
 const enum State {
     Seek,
@@ -123,20 +147,15 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
 
     const regions: MemoryRegion[] = [];
     const symbols: SymbolRecord[] = [];
-    const fills: FillEntry[] = [];
-
+    const looseFills: FillEntry[] = [];
     let currentLma: number | null = null;
     let currentSectionHeader = '';
     let pendingSection: string | null = null;
     let group: Contribution | null = null;
     let discardedPendingName: string | null = null;
+    let outSec: OutSection | null = null;
 
-    const flushGroup = (): void => {
-        if (!group) {
-            return;
-        }
-        const g = group;
-        group = null;
+    const emitGroup = (g: Contribution): void => {
         const sizes = allocateSizes(g, warnings);
         const { archive, member } = parseObjectField(cleanObjectField(g.object));
         g.symbols.forEach((sym, i) => {
@@ -175,6 +194,105 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 fromSectionName: true,
             });
         }
+    };
+
+    const emitFill = (f: FillEntry): void => {
+        symbols.push({
+            ...baseRecord(),
+            name: '*fill*',
+            addr: f.vma,
+            size: f.size,
+            kind: 'pad',
+            section: f.section,
+            object: '[pad]',
+            lma: f.lma,
+            status: 'kept',
+            isFill: true,
+            fromSectionName: false,
+        });
+    };
+
+    const closeGroup = (): void => {
+        if (!group) {
+            return;
+        }
+        const g = group;
+        group = null;
+        if (outSec) {
+            outSec.units.push({ kind: 'group', group: g });
+        } else {
+            emitGroup(g);
+        }
+    };
+
+    /**
+     * Resolve one buffered output section: keep the units that tile
+     * [vma, vma+size) exactly (contribution + fill chain), drop the stale
+     * merge/relax snapshots ld re-prints among them. When no exact tiling
+     * exists (unusual layouts) fall back to keeping every unit.
+     */
+    const resolveOutSec = (sec: OutSection): void => {
+        if (sec.vma == null || sec.size == null || sec.size === 0) {
+            for (const u of sec.units) {
+                if (u.kind === 'group') {
+                    emitGroup(u.group);
+                } else {
+                    emitFill(u.fill);
+                }
+            }
+            return;
+        }
+        const start = sec.vma;
+        const end = start + sec.size;
+        const viable = sec.units
+            .map((u, idx) => ({ u, idx }))
+            .filter(({ u }) => {
+                const v = unitVma(u);
+                const s = unitSize(u);
+                return v >= start && v + s <= end;
+            })
+            .sort((a, b) => unitVma(a.u) - unitVma(b.u) || a.idx - b.idx);
+        const budget = { visits: 20000 };
+        const search = (cursor: number, from: number, acc: OutUnit[]): OutUnit[] | null => {
+            if (cursor === end) {
+                return acc;
+            }
+            if (budget.visits-- <= 0) {
+                return null;
+            }
+            for (let i = from; i < viable.length; i++) {
+                const v = unitVma(viable[i].u);
+                if (v < cursor) {
+                    continue;
+                }
+                if (v > cursor) {
+                    return null; // vma-ordered: nothing can fill the gap
+                }
+                const found = search(cursor + unitSize(viable[i].u), i + 1, [...acc, viable[i].u]);
+                if (found) {
+                    return found;
+                }
+            }
+            return null;
+        };
+        const chain = search(start, 0, []);
+        for (const u of chain ?? sec.units) {
+            if (u.kind === 'group') {
+                emitGroup(u.group);
+            } else {
+                emitFill(u.fill);
+            }
+        }
+    };
+
+    const closeOutSec = (): void => {
+        closeGroup();
+        if (!outSec) {
+            return;
+        }
+        const sec = outSec;
+        outSec = null;
+        resolveOutSec(sec);
     };
 
     const pushSectionRow = (section: string, vma: number, size: number, objectRaw: string, lma: number | null, status: 'kept' | 'discarded'): void => {
@@ -270,18 +388,38 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 if (col0) {
                     const header = OUTPUT_SECTION_RE.exec(trimmed);
                     if (header) {
-                        flushGroup();
-                        pendingSection = null;
+                        closeOutSec();
+                        outSec = { name: header[1], vma: parseInt(header[2], 16), size: parseInt(header[3], 16), units: [] };
                         currentSectionHeader = header[1];
                         currentLma = header[4] ? parseInt(header[4], 16) : null;
+                        pendingSection = null;
+                        break;
+                    }
+                    if (trimmed === '/DISCARD/') {
+                        closeOutSec();
+                        outSec = { name: '/DISCARD/', vma: null, size: null, units: [] };
+                        currentSectionHeader = '/DISCARD/';
+                        pendingSection = null;
                         break;
                     }
                     if (trimmed.startsWith('LOAD ') || trimmed.startsWith('OUTPUT(')) {
+                        closeOutSec();
                         break;
                     }
                     if (trimmed.includes(' = ')) {
                         // linker-script assignment at column 0 ends the current group
-                        flushGroup();
+                        closeGroup();
+                        pendingSection = null;
+                        break;
+                    }
+                    const bareName = /^(\.[^\s]+)\s*$/.exec(trimmed);
+                    if (bareName) {
+                        // two-line output header: name alone, extent follows on
+                        // the next line as a `load address` continuation
+                        closeOutSec();
+                        outSec = { name: bareName[1], vma: null, size: null, units: [] };
+                        currentSectionHeader = bareName[1];
+                        currentLma = null;
                         pendingSection = null;
                         break;
                     }
@@ -294,24 +432,42 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
 
                 const fill = FILL_RE.exec(line);
                 if (fill) {
-                    flushGroup();
+                    closeGroup();
                     pendingSection = null;
-                    fills.push({ vma: parseInt(fill[1], 16), size: parseInt(fill[2], 16), section: currentSectionHeader });
+                    // ld echoes a load address even for zero-init (.bss-style)
+                    // sections — their fills never reach the load image
+                    const zeroInit = classifySection(currentSectionHeader) === 'bss';
+                    const entry = {
+                        vma: parseInt(fill[1], 16),
+                        size: parseInt(fill[2], 16),
+                        section: currentSectionHeader,
+                        lma: zeroInit ? null : currentLma,
+                    };
+                    if (outSec) {
+                        outSec.units.push({ kind: 'fill', fill: entry });
+                    } else {
+                        looseFills.push(entry);
+                    }
                     break;
                 }
-                if (trimmed.startsWith('*') && trimmed.includes('(')) {
-                    // wildcard / object-list echo (`*(.text*)`, `*crtbegin.o(.ctors)`) — informational only
+                if (trimmed.startsWith('FILL ')) {
+                    // `FILL mask 0xff` — script fill-pattern echo, no extent
+                    break;
+                }
+                if (trimmed.startsWith('*') || (WILDCARD_ECHO_RE.test(trimmed) && !/0x/i.test(trimmed))) {
+                    // wildcard / object-list echo (`*(.text*)`, `*crtbegin.o(.ctors)`,
+                    // `libc.a(*)`) — informational only
                     break;
                 }
                 if (trimmed.startsWith('[!provide]')) {
-                    flushGroup();
+                    closeGroup();
                     pendingSection = null;
                     break;
                 }
 
                 const contrib = CONTRIBUTION_RE.exec(line);
                 if (contrib) {
-                    flushGroup();
+                    closeGroup();
                     pendingSection = null;
                     group = {
                         section: contrib[1],
@@ -326,16 +482,30 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
 
                 const sectionName = SECTION_NAME_RE.exec(line);
                 if (sectionName) {
-                    flushGroup();
+                    closeGroup();
                     pendingSection = sectionName[1];
                     break;
                 }
 
                 const continuation = CONTINUATION_RE.exec(line);
                 if (continuation) {
-                    flushGroup();
-                    const section = pendingSection ?? '(unknown)';
-                    if (!pendingSection) {
+                    closeGroup();
+                    const obj = continuation[3];
+                    if (obj.startsWith('load address')) {
+                        // second line of a two-line output header — carries the
+                        // section extent, no contribution of its own. Two-line
+                        // headers are NOLOAD/script sections; their "load
+                        // address" is not part of the flash image, so currentLma
+                        // deliberately stays unset here.
+                        if (outSec && outSec.vma == null) {
+                            outSec.vma = parseInt(continuation[1], 16);
+                            outSec.size = parseInt(continuation[2], 16);
+                        }
+                        pendingSection = null;
+                        break;
+                    }
+                    const section = pendingSection ?? (currentSectionHeader || '(unknown)');
+                    if (!pendingSection && !currentSectionHeader) {
                         warnings.add('contribution line without a preceding section name', line.trim(), lineNo + 1);
                     }
                     pendingSection = null;
@@ -344,7 +514,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         vma: parseInt(continuation[1], 16),
                         size: parseInt(continuation[2], 16),
                         lma: currentLma,
-                        object: continuation[3],
+                        object: obj,
                         symbols: [],
                     };
                     break;
@@ -359,12 +529,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     }
                     // linker-script assignments echo an address before the expression
                     if (name.includes(' = ')) {
-                        flushGroup();
+                        closeGroup();
                         pendingSection = null;
                         break;
                     }
                     if (HEX_ONLY_RE.test(name)) {
-                        flushGroup();
+                        closeGroup();
                         break;
                     }
                     if (group) {
@@ -380,23 +550,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             }
         }
     }
-    flushGroup();
+    closeOutSec();
 
-    // Fill entries become pad rows attributed to their surrounding output section.
-    for (const fill of fills) {
-        symbols.push({
-            ...baseRecord(),
-            name: '*fill*',
-            addr: fill.vma,
-            size: fill.size,
-            kind: 'pad',
-            section: fill.section,
-            object: '[pad]',
-            lma: null,
-            status: 'kept',
-            isFill: true,
-            fromSectionName: false,
-        });
+    // Fill entries seen outside any output section become pad rows attributed
+    // to their surrounding output section header.
+    for (const fill of looseFills) {
+        emitFill(fill);
     }
 
     // Rows whose name came from a section often embed the mangled symbol

@@ -99,6 +99,12 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | 共享库 `libc.so.6` 条目 | 记录但默认折叠 | 宿主 Linux 场景才有；嵌入式通常无 |
 | `OUTPUT(...)` | 文件结束锚点 | |
 | `LOAD /path` | 跳过 | |
+| 无点自定义段名贡献行（` shellCommand  <vma> <size> <obj>`） | 正常贡献组，kind=other | `__attribute__((section("shellCommand")))` 等脚本 `*(名字)` 收集的自定义段——段名 token 不以 `.` 开头 |
+| 合并/relax 历史快照行 | 剔除 | LTO+字符串合并下 ld 会重打印已合并输入段的 pre-merge 大小（同 VMA、旧尺寸，无占位）——解析器按"输出段内贡献+fill 恰好铺满 [vma, vma+size)"链式取舍，非链上行丢弃 |
+| 两行式输出段头（col0 裸段名 + 次行 `load address`） | 段级 extent，不产生贡献 | NOLOAD/纯脚本段（`._user_heap_stack`、`.tm_clone_table`）的打印形态；其次行的 load address 不是真实载像，段内 fill 只占 RAM |
+| `FILL mask 0xff` | 跳过 | 脚本 FILL 回显，无 extent |
+| `.bss` 类段（单行头也带 load address）的 `*fill*` | 只占 RAM | zero-init 无加载镜像；fill 的 lma 归零 |
+| 有载像段（`.data`）内的 `*fill*` | 占 Flash（载像）+ RAM | fill 字节同样存在于 LMA 镜像——size(1) 的 data 列含它 |
 
 ### 1.6 输出段分类表（kind 推断）
 
@@ -135,6 +141,9 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | firmware_sections_gc.map | `-ffunction-sections -fdata-sections -Wl,--gc-sections` + 静态库 libutil.a + STM32 式链接脚本（FLASH@0x08000000/RAM@0x20000000） | 归档成员、`.ARM.exidx/extab`、C++ 类/模板 mangled 段名、`load address` 列、cortex-m3 relax 注释行、`linker stubs`；**区域占用与 `--print-memory-usage` 精确一致（FLASH 4152 / RAM 260）** |
 | firmware_basic.map | 无 -ffunction-sections | 单体 `.text` 多符号贡献的地址差分摊 |
 | firmware_no_demangle.map | 追加 `-Wl,--no-demangle` | mangled 符号行（demangle 引擎主战场） |
+| firmware_common.map | `-fcommon` | ` COMMON <vma> <size> <obj>` 贡献行（无点段名、归 bss）；**golden FLASH 44 / RAM 24** |
+| firmware_cpp_sections.map | `-O0 -ffunction-sections -fdata-sections`（C++） | 符号行位于 mangled 段内（`.text._ZN...`）——mangled 从段名回收；**golden FLASH 120 / RAM 4** |
+| firmware_shellcmd.map | `__attribute__((section("shellCommand")))` + `*(shellCommand)` 收集 | 无点自定义段名贡献行；**golden FLASH 44 / RAM 0** |
 
 **lld（`test/fixtures/lld/`）：** build.sh 提供 `ld.lld -Map` 生成脚本（armv7m freestanding）；本机 lld 就绪后执行回填，解析器先以官方表格格式合成基准验证。
 

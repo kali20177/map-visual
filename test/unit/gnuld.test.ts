@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { allocateSizes, parseGnuLd } from '../../src/parser/gnuld';
 import { classifySection } from '../../src/parser/classify';
 import { Warnings } from '../../src/parser/warnings';
+import { parseMapText } from '../../src/parser/pipeline';
 import { discarded, findSym, kept, parseFixture } from './helpers';
 
 describe('section classification', () => {
@@ -246,6 +247,149 @@ describe('GNU ld — COMMON contributions and diagnostics', () => {
         const list = w.list();
         expect(list[0].message).toBe('unrecognized line');
         expect(list[0].line).toBe(5);
+    });
+
+    it('parses the dot-less shellCommand fixture against --print-memory-usage', async () => {
+        const doc = await parseFixture('gnuld-arm/firmware_shellcmd.map');
+        const cmds = findSym(doc, 'shell_commands');
+        expect(cmds).toBeDefined();
+        expect(cmds!.section).toBe('shellCommand');
+        expect(cmds!.kind).toBe('other');
+        expect(cmds!.size).toBe(16);
+        expect(cmds!.storage).toEqual(['flash']);
+        // ld --print-memory-usage golden: FLASH 44 B / RAM 0 B
+        expect(doc.totals.flash).toBe(44);
+        expect(doc.totals.ram).toBe(0);
+        expect(doc.warnings).toEqual([]);
+    });
+});
+
+describe('GNU ld — real-world section forms (LTO / script-only sections)', () => {
+    const SYNTH_HEAD = [
+        'Memory Configuration',
+        '',
+        'Name             Origin             Length             Attributes',
+        'FLASH            0x0000000008000000 0x0000000000020000 xr',
+        'RAM              0x0000000020000000 0x0000000000010000 xrw',
+        '',
+        '',
+        'Linker script and memory map',
+        '',
+    ].join('\n');
+
+    it('drops stale pre-merge snapshot lines and keeps the tiling chain', () => {
+        // Reproduces the LTO+string-merge shape: ld re-prints merged-out input
+        // sections at their pre-merge extent; the output section is only 0x40.
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.rodata         0x08000010       0x40',
+                ' *(.rodata*)',
+                ' .rodata.str1.1',
+                '                0x08000010       0x30 a.o',
+                '                                 0x8 (size before relaxing)',
+                ' .rodata.main.str1.1',
+                '                0x08000040       0x20 a.o',
+                ' .rodata.tab    0x08000040        0x8 a.o',
+                '                0x08000040                tab',
+                ' .rodata.other  0x08000048        0x8 a.o',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        expect(symbols.filter((s) => s.name === '.rodata.main.str1.1')).toEqual([]);
+        const flash = symbols.filter((s) => s.kind !== 'meta').reduce((a, s) => a + s.size, 0);
+        expect(flash).toBe(0x40);
+        const tab = symbols.find((s) => s.name === 'tab');
+        expect(tab!.size).toBe(8);
+        expect(tab!.section).toBe('.rodata.tab');
+    });
+
+    it('tiles script-only sections with fills and keeps them out of flash', async () => {
+        // `._user_heap_stack` prints as a two-line header (NOLOAD): its fills
+        // occupy RAM only, never the flash load image.
+        const text = [
+            SYNTH_HEAD,
+            '.data           0x20000000        0x8 load address 0x08000010',
+            ' *(.data*)',
+            ' .data          0x20000000        0x8 a.o',
+            '                0x20000000                dv',
+            '._user_heap_stack',
+            '                0x20000008      0x408 load address 0x08000018',
+            ' *fill*         0x20000008        0x8 ',
+            '                0x20000010                        . = (. + _Min_Heap_Size)',
+            ' *fill*         0x20000010      0x400 ',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const dv = findSym(doc, 'dv')!;
+        expect(dv.storage).toEqual(['flash', 'ram']);
+        const fills = doc.symbols.filter((s) => s.isFill);
+        expect(fills.map((f) => f.size)).toEqual([8, 0x400]);
+        expect(fills.map((f) => f.storage)).toEqual([['ram'], ['ram']]);
+        expect(doc.totals.flash).toBe(8);
+        expect(doc.totals.ram).toBe(8 + 8 + 0x400);
+    });
+
+    it('parses dot-less custom section contributions (section("shellCommand"))', () => {
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text           0x08000000       0x14 a.o',
+                ' *(.text*)',
+                ' .text          0x08000000       0x10 a.o',
+                '                0x08000000                main',
+                ' shellCommand   0x08000010        0x4 a.o',
+                '                0x08000010                cmds',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        const cmds = symbols.find((s) => s.name === 'cmds');
+        expect(cmds).toBeDefined();
+        expect(cmds!.section).toBe('shellCommand');
+        expect(cmds!.kind).toBe('other');
+        expect(cmds!.size).toBe(4);
+    });
+
+    it('attributes script data rows (LONG) to the surrounding output section', () => {
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.fw_signature  0x08000000       0x8',
+                '                0x08000000        0x4 LONG 0x47535746',
+                '                0x08000004        0x4 LONG 0x1',
+                '/DISCARD/',
+                ' libc.a(*)',
+                ' libm.a(*)',
+                'FILL mask 0xff',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        const rows = symbols.filter((s) => s.section === '.fw_signature');
+        expect(rows.map((r) => r.size)).toEqual([4, 4]);
+        expect(rows.every((r) => r.kind === 'other')).toBe(true);
+    });
+
+    it('keeps zero-init (.bss) fills out of the flash image even with a load address', async () => {
+        const text = [
+            SYNTH_HEAD,
+            '.bss            0x20000000      0x408 load address 0x08000100',
+            ' *fill*         0x20000000      0x408 ',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const fill = doc.symbols.find((s) => s.isFill)!;
+        expect(fill.storage).toEqual(['ram']);
+        expect(doc.totals.flash).toBe(0);
+        expect(doc.totals.ram).toBe(0x408);
     });
 });
 

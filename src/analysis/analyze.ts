@@ -1,5 +1,6 @@
 import type { MapDocument, MapTotals, MemoryRegion, SymbolRecord, Storage, SymbolKind } from '../types';
 import { EMPTY_KIND_TOTALS } from '../types';
+import { classifySection } from '../parser/classify';
 
 function regionOf(regions: MemoryRegion[], addr: number): MemoryRegion | undefined {
     return regions.find((r) => addr >= r.origin && addr < r.origin + r.length);
@@ -57,7 +58,9 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (sym.kind === 'bss') {
         return ['ram'];
     }
-    if (sym.kind === 'data') {
+    // data, and fills inside an initialized (LMA-bearing) section: the bytes
+    // live in the flash load image and at the runtime address
+    if (sym.kind === 'data' || (sym.isFill && sym.lma != null)) {
         const set = new Set<Storage>();
         // initializer bytes live in flash (lma), runtime image in ram (vma)
         if (lmaRegion ? lmaRegion.role === 'flash' : true) {
@@ -68,8 +71,13 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
         }
         return set.size > 0 ? [...set] : ['ram'];
     }
-    // code / rodata / meta / other / pad — follow the VMA region, fall back to flash
-    if (vmaRegion && vmaRegion.role !== 'other') {
+    // code / rodata / other / pad — follow the VMA region
+    if (vmaRegion) {
+        // a downgraded region (see finalize) holds no allocatable content —
+        // e.g. (COPY) sections parked in a scratch address space
+        if (vmaRegion.role === 'other') {
+            return [];
+        }
         return [vmaRegion.role];
     }
     if (lmaRegion && lmaRegion.role === 'ram') {
@@ -132,8 +140,40 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
 /** Convenience for the pipeline: mutates doc with roles + storage + totals. */
 export function finalize(doc: MapDocument): MapDocument {
     assignRegionRoles(doc.regions, doc.symbols);
+    downgradeContentlessRegions(doc.regions, doc.symbols);
     doc.totals = computeStorageAndTotals(doc);
     return doc;
+}
+
+/**
+ * Regions whose kept contents are entirely non-alloc kinds ("other"/"meta" —
+ * e.g. a (COPY) output section parked in a scratch address space behind a
+ * ROM-ish name) occupy no storage; downgrade them so their symbols claim none.
+ * A region counts as holding storage content when storage-kind symbols live at
+ * its VMA, when their load image (lma) lands in it, or when fills belonging to
+ * a storage-kind section sit in it.
+ */
+function downgradeContentlessRegions(regions: MemoryRegion[], symbols: SymbolRecord[]): void {
+    const storageKinds = new Set<SymbolKind>(['code', 'rodata', 'data', 'bss']);
+    const inRegion = (addr: number, r: MemoryRegion): boolean => addr >= r.origin && addr < r.origin + r.length;
+    const holdsStorage = (s: SymbolRecord, r: MemoryRegion): boolean => {
+        if (s.status !== 'kept') {
+            return false;
+        }
+        const kind = s.isFill ? classifySection(s.section) : s.kind;
+        if (!storageKinds.has(kind)) {
+            return false;
+        }
+        return inRegion(s.addr, r) || (s.lma != null && inRegion(s.lma, r));
+    };
+    for (const r of regions) {
+        if (r.role === 'other') {
+            continue;
+        }
+        if (!symbols.some((s) => holdsStorage(s, r))) {
+            r.role = 'other';
+        }
+    }
 }
 
 export type { SymbolKind };

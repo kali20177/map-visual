@@ -34,7 +34,7 @@ npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 
 - **package.json 不能加 `"type": "module"`**：dist/worker.js 是 CJS bundle，加了会被 Node 当 ESM 加载直接崩（wasm glue 内部用 require）
 - demangler：绕过 gecko-profiler-demangle 默认入口，`import 'gecko-profiler-demangle/index_bg.js'` + 自行 `WebAssembly.instantiate(bytes, { './index_bg.js': bg })` + `__wbg_set_wasm`；wasm 由 build.mjs 拷到 dist/，worker 用 `__dirname` 定位
-- GNU ld map：relax 注释是独立无地址行；脚本赋值带地址会伪装符号行；`.bss` 段头也有 load address，区域占用必须按 storage 过滤；符号尺寸靠贡献段内地址差分摊（组键含地址，见 docs/FORMATS.md §1.4）
+- GNU ld map：relax 注释是独立无地址行；脚本赋值带地址会伪装符号行；`.bss` 段头也有 load address，区域占用必须按 storage 过滤；符号尺寸靠贡献段内地址差分摊（组键含地址，见 docs/FORMATS.md §1.4）；LTO 合并段会重打印 pre-merge 历史快照行（按"输出段内贡献+fill 铺满段 size"取舍）；无点自定义段名（`section("shellCommand")`）与两行式 NOLOAD 段头（col0 裸名 + load address 行）都要识别
 - lld map：整表有前导缩进，行类型靠 Align 列后空格数判别（output=1、child≥2）；尺寸是无前缀十六进制（`12` = 18）
 - 新格式（M2 Keil / M4 IAR）走 `src/parser/registry.ts` 的 `registerParser`，契约见该文件注释；不要改 detect/pipeline 的分发逻辑
 

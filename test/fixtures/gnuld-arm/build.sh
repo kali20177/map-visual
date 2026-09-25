@@ -48,5 +48,10 @@ arm-none-eabi-g++ -mcpu=cortex-m3 -mthumb -O0 -ffunction-sections -fdata-section
 arm-none-eabi-g++ -mcpu=cortex-m3 -mthumb -O0 sensor.o -T "$DIR/link.ld" -nostartfiles \
   -Wl,-Map="$DIR/firmware_cpp_sections.map" -Wl,--print-memory-usage -o firmware_cpp.elf
 
+# 6) dot-less custom input section: ` shellCommand  <vma> <size> <obj>`
+arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -O1 -c "$DIR/shell_cmd.c" -o shell_cmd.o
+arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb shell_cmd.o -T "$DIR/shell_link.ld" -nostartfiles \
+  -Wl,-Map="$DIR/firmware_shellcmd.map" -Wl,--print-memory-usage -o firmware_shellcmd.elf
+
 echo "fixtures written to $DIR"
 rm -rf "$BUILD"
