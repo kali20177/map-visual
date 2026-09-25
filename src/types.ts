@@ -1,0 +1,86 @@
+/**
+ * MapVisual intermediate representation (IR).
+ *
+ * Parsers produce a MapDocument; the webview renders it. The symbol list is
+ * flat (one row per symbol / fill / discarded entry) — contribution-level
+ * information is preserved on the row itself (section, object, addresses),
+ * so the webview never needs the original grouping.
+ */
+
+export type MapFormat = 'gnu-ld' | 'lld' | 'armlink' | 'ilink' | 'unknown';
+
+export type SymbolKind = 'code' | 'rodata' | 'data' | 'bss' | 'meta' | 'pad' | 'other';
+
+export type Storage = 'flash' | 'ram';
+
+export interface MemoryRegion {
+    name: string;
+    origin: number;
+    length: number;
+    attrs: string;
+    role: 'flash' | 'ram' | 'other';
+}
+
+export interface SymbolRecord {
+    /** Display name as it appeared in the map (may already be demangled by the linker). */
+    name: string;
+    /** Mangled form when known (extracted from section names like `.text._ZN...`, or the raw symbol). */
+    mangled: string | null;
+    /** Demangled form (WASM demangler); null when not demanglable / demangling disabled. */
+    demangled: string | null;
+    addr: number;
+    size: number;
+    kind: SymbolKind;
+    section: string;
+    object: string;
+    archive: string | null;
+    member: string | null;
+    /** Load address when the map provides one (.data → flash copy). Null otherwise. */
+    lma: number | null;
+    storage: Storage[];
+    status: 'kept' | 'discarded';
+    /** True for `*fill*` / PAD rows. */
+    isFill: boolean;
+    /** Name was reconstructed from a mangled section name (`.text._ZN...`) rather than a symbol line. */
+    fromSectionName: boolean;
+    /** Heuristically flagged as compiler/runtime object (crt*.o, libgcc, newlib, ...). */
+    isSystem: boolean;
+    /** Object file is an LTO intermediate (.ltrans*.o / LLVM fat LTO names). */
+    isLto: boolean;
+}
+
+export interface ParseWarning {
+    message: string;
+    count: number;
+    samples: string[];
+}
+
+export interface MapTotals {
+    flash: number;
+    ram: number;
+    keptCount: number;
+    discardedCount: number;
+    fillTotal: number;
+    kindTotals: Record<SymbolKind, number>;
+    /** Per-region used size, derived from kept symbols + fills falling into the region. */
+    regions: { region: MemoryRegion; used: number }[];
+}
+
+export interface MapDocument {
+    format: MapFormat;
+    file: string;
+    regions: MemoryRegion[];
+    symbols: SymbolRecord[];
+    totals: MapTotals;
+    warnings: ParseWarning[];
+}
+
+export const EMPTY_KIND_TOTALS = (): Record<SymbolKind, number> => ({
+    code: 0,
+    rodata: 0,
+    data: 0,
+    bss: 0,
+    meta: 0,
+    pad: 0,
+    other: 0,
+});

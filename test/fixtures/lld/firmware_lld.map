@@ -1,0 +1,21 @@
+     VMA      LMA     Size Align Out     In      Symbol
+   10094    10094       18     4 .ARM.exidx
+   10094    10094       18     4         <internal>:(.ARM.exidx)
+   100ac    100ac       16     4 .text
+   100ac    100ac       16     4         main.o:(.text)
+   100ac    100ac        0     1                 $t
+   100ad    100ad        4     1                 compute
+   100b1    100b1       12     1                 main
+   100c4    100c4        4     4 .data
+   100c4    100c4        4     4         main.o:(.data)
+   100c4    100c4        4     1                 shared_counter
+       0        0       3b     1 .comment
+       0        0       3b     1         <internal>:(.comment)
+       0        0       41     1 .ARM.attributes
+       0        0       41     1         main.o:(.ARM.attributes)
+       0        0       60     4 .symtab
+       0        0       60     4         <internal>:(.symtab)
+       0        0       4b     1 .shstrtab
+       0        0       4b     1         <internal>:(.shstrtab)
+       0        0       27     1 .strtab
+       0        0       27     1         <internal>:(.strtab)

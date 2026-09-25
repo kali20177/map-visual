@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.vsix
+test/fixtures/**/*.elf
+test/fixtures/**/*.axf
+# extensionless ELF binaries copied with the imgui corpus (tests only read .map files)
+test/fixtures/gnuld-x86/tls/test_tls
+test/fixtures/gnuld-x86/large/test_large
+test/fixtures/gnuld-x86/large/test_large_large
+test/fixtures/gnuld-x86/ifunc/test_ifunc
+.DS_Store
+mockdoc.json

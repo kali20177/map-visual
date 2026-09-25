@@ -1,0 +1,96 @@
+{
+  "name": "mapvisual",
+  "displayName": "MapVisual",
+  "description": "Visualize embedded linker map files (GNU ld / LLVM lld) as a sortable, filterable symbol list with C++ demangling. Flash/RAM usage at a glance.",
+  "version": "0.1.0",
+  "publisher": "mapvisual",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "embedded",
+    "linker map",
+    "map file",
+    "firmware",
+    "flash",
+    "ram",
+    "gcc",
+    "lld"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mapvisual.open",
+        "title": "MapVisual: Open Map File",
+        "category": "MapVisual"
+      },
+      {
+        "command": "mapvisual.openAsText",
+        "title": "MapVisual: Open as Text",
+        "category": "MapVisual"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mapvisual.open",
+        "key": "alt+m",
+        "mac": "alt+m"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "mapvisual.editor",
+        "displayName": "MapVisual",
+        "selector": [
+          {
+            "filenamePattern": "*.map"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "MapVisual",
+      "properties": {
+        "mapvisual.demangle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Demangle C++ symbol names (built-in WASM demangler, no toolchain required)."
+        },
+        "mapvisual.formatOverride": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "gnu-ld",
+            "lld"
+          ],
+          "default": "auto",
+          "description": "Force the map file format instead of auto-detection."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "gecko-profiler-demangle": "^0.4.0"
+  }
+}
