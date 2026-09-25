@@ -10,3 +10,4 @@ test/fixtures/gnuld-x86/large/test_large_large
 test/fixtures/gnuld-x86/ifunc/test_ifunc
 .DS_Store
 mockdoc.json
+CLAUDE.md
