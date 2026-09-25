@@ -80,17 +80,38 @@
     "compile": "node build.mjs",
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check:coupling": "depcruise src --config .dependency-cruiser.cjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "simple-git-hooks"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "simple-git-hooks@2.14.0": true
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": "eslint --fix"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.85.0",
+    "dependency-cruiser": "^18.4.0",
     "esbuild": "^0.25.0",
+    "eslint": "^10.11.0",
+    "lint-staged": "^17.5.1",
+    "simple-git-hooks": "^2.14.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.70.1",
     "vitest": "^3.0.0"
   },
   "dependencies": {
     "gecko-profiler-demangle": "^0.4.0"
-  }
+  },
+  "type": "module"
 }

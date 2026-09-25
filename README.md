@@ -23,6 +23,24 @@ npm test            # vitest，65 项单测（含 17 个真实 map fixture）
 - **多工具链**：GNU ld ✅ / LLVM lld ✅ / Keil armlink（M2）/ IAR ilink（M4）
 - **汇总面板**：区域占用条（Memory Configuration）、分类占比、Top 符号、填充浪费统计；CSV 导出
 
+## 质量门禁
+
+工具链参照 kart 项目：**ESLint（typescript-eslint recommended）+ dependency-cruiser 架构规则 + lint-staged 提交钩子**，刻意不引入格式化器（风格由统一约定与 tsc 严格选项保证，与 kart 一致）。
+
+```bash
+npm run lint            # ESLint：正确性规则 + 运行时边界
+npm run check:coupling  # dependency-cruiser：模块分层
+npm run typecheck       # tsc --noEmit（strict + noUnusedLocals）
+npm test                # vitest
+```
+
+**运行时边界规则**（本项目最重要的一层防护，均经故意违规实测确认会触发）：
+- `src/worker.ts / parser / demangle / analysis`（worker_threads 运行时）**禁止 import vscode** —— tsc 查不出这个错误（@types/vscode 使其可解析），但打包后 Worker 启动即崩，由 ESLint `no-restricted-imports` 拦截
+- `src/webview/**`（沙箱 iframe 运行时）禁止 vscode 与 Node 内置模块；本地依赖白名单限定 `types/protocol/webview`（解析结果必须经宿主下发），由 dependency-cruiser 强制
+- `extension / mapEditor / workerClient`（宿主）不得绕过 worker 直接引用解析器/分析器
+
+提交时 `simple-git-hooks` 的 pre-commit 会对暂存文件自动执行 `eslint --fix`。`package.json` 的 `allowScripts` 声明了 esbuild / simple-git-hooks 的安装脚本白名单（npm ≥11 的 install-scripts 机制）。
+
 ## 文档
 
 | 文档 | 内容 |
