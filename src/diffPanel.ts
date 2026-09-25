@@ -43,8 +43,10 @@ export class DiffPanel {
     }
 
     private async exportCsv(csv: string, suggestedName: string): Promise<void> {
+        // Anchor the suggestion next to the diffed maps, not the host cwd.
+        const defaultUri = path.isAbsolute(suggestedName) ? vscode.Uri.file(suggestedName) : vscode.Uri.joinPath(vscode.Uri.file(path.dirname(this.diff.fileA)), suggestedName);
         const target = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(suggestedName),
+            defaultUri,
             filters: { 'CSV': ['csv'] },
         });
         if (!target) {

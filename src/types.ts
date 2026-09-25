@@ -53,6 +53,8 @@ export interface ParseWarning {
     message: string;
     count: number;
     samples: string[];
+    /** 1-based source line of the first occurrence, when the warning comes from a specific line. */
+    line?: number;
 }
 
 export interface MapTotals {

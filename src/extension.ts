@@ -20,9 +20,16 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('mapvisual.open', () => void openMapFile()),
         vscode.commands.registerCommand('mapvisual.diff', () => void diffMaps(worker, context)),
         vscode.commands.registerCommand('mapvisual.reveal', () => provider.revealActivePanel()),
-        vscode.commands.registerCommand('mapvisual.openAsText', (uri?: vscode.Uri) =>
-            void vscode.commands.executeCommand('vscode.openWith', uri ?? currentMapUri(), 'default', vscode.ViewColumn.Active),
-        ),
+        vscode.commands.registerCommand('mapvisual.openAsText', (uri?: vscode.Uri) => {
+            // Prefer explicit args, then a focused .map text editor, then the map
+            // custom editor that currently has focus (activeTextEditor is undefined there).
+            const target = uri ?? currentMapUri() ?? provider.activeMapUri();
+            if (!target) {
+                void vscode.window.showInformationMessage('MapVisual: no map file is open.');
+                return;
+            }
+            void vscode.commands.executeCommand('vscode.openWith', target, 'default', vscode.ViewColumn.Active);
+        }),
     );
 }
 
@@ -117,7 +124,10 @@ function workspaceRelative(uri: vscode.Uri): string {
 }
 
 async function findWorkspaceMaps(): Promise<vscode.Uri[]> {
-    const files = await vscode.workspace.findFiles('**/*.map', '**/{node_modules,.git,dist,out,build,DerivedData}/**', 200);
+    // Embedded toolchains drop maps into build/out/dist-style dirs — only skip
+    // dependency and VCS folders, everything else is a candidate (JSON sniffing
+    // keeps JS sourcemaps from crashing the editor).
+    const files = await vscode.workspace.findFiles('**/*.map', '**/{node_modules,.git}/**', 200);
     const stats = await Promise.all(
         files.map(async (uri) => {
             try {

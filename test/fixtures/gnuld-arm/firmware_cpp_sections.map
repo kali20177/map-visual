@@ -1,0 +1,117 @@
+
+Discarded input sections
+
+ .group         0x00000000       0x18 sensor.o
+ .group         0x00000000       0x14 sensor.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x00020000         xr
+RAM              0x20000000         0x00005000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD sensor.o
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/../../../../arm-none-eabi/lib/thumb/v7-m/nofp/libstdc++.a
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/../../../../arm-none-eabi/lib/thumb/v7-m/nofp/libm.a
+START GROUP
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/libgcc.a
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/../../../../arm-none-eabi/lib/thumb/v7-m/nofp/libc.a
+END GROUP
+
+.isr_vector
+ *(.isr_vector)
+
+.text           0x08000000       0x70
+ *(.text*)
+ .text          0x08000000        0x0 sensor.o
+ .text._ZN3app6Sensor4nextEi
+                0x08000000       0x26 sensor.o
+                0x08000000                app::Sensor::next(int)
+ *fill*         0x08000026        0x2 
+ .text.main     0x08000028       0x18 sensor.o
+                0x08000028                main
+ .text._ZN3app11clamp_valueIiEET_S1_S1_S1_
+                0x08000040       0x30 sensor.o
+                0x08000040                int app::clamp_value<int>(int, int, int)
+ *(.rodata*)
+                0x08000070                        . = ALIGN (0x4)
+                0x08000070                        _etext = .
+
+.glue_7         0x08000070        0x0
+ .glue_7        0x08000070        0x0 linker stubs
+
+.glue_7t        0x08000070        0x0
+ .glue_7t       0x08000070        0x0 linker stubs
+
+.vfp11_veneer   0x08000070        0x0
+ .vfp11_veneer  0x08000070        0x0 linker stubs
+
+.v4_bx          0x08000070        0x0
+ .v4_bx         0x08000070        0x0 linker stubs
+
+.iplt           0x08000070        0x0
+ .iplt          0x08000070        0x0 sensor.o
+
+.ARM.extab      0x08000070        0x0
+ *(.ARM.extab* .gnu.linkonce.armextab.*)
+ .ARM.extab.text._ZN3app6Sensor4nextEi
+                0x08000070        0x0 sensor.o
+ .ARM.extab.text.main
+                0x08000070        0x0 sensor.o
+ .ARM.extab.text._ZN3app11clamp_valueIiEET_S1_S1_S1_
+                0x08000070        0x0 sensor.o
+
+.ARM.exidx      0x08000070        0x8
+                0x08000070                        __exidx_start = .
+ *(.ARM.exidx*)
+ .ARM.exidx.text._ZN3app6Sensor4nextEi
+                0x08000070        0x8 sensor.o
+ .ARM.exidx.text.main
+                0x08000078        0x0 sensor.o
+                                  0x8 (size before relaxing)
+ .ARM.exidx.text._ZN3app11clamp_valueIiEET_S1_S1_S1_
+                0x08000078        0x0 sensor.o
+                                  0x8 (size before relaxing)
+                0x08000078                        __exidx_end = .
+                0x08000078                        _sidata = LOADADDR (.data)
+
+.rel.dyn        0x08000078        0x0
+ .rel.iplt      0x08000078        0x0 sensor.o
+
+.data           0x20000000        0x0 load address 0x08000078
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _sdata = .
+ *(.data*)
+ .data          0x20000000        0x0 sensor.o
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _edata = .
+
+.igot.plt       0x20000000        0x0 load address 0x08000078
+ .igot.plt      0x20000000        0x0 sensor.o
+
+.bss            0x20000000        0x4 load address 0x08000078
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _sbss = .
+ *(.bss*)
+ .bss           0x20000000        0x0 sensor.o
+ .bss.s         0x20000000        0x4 sensor.o
+                0x20000000                s
+ *(COMMON)
+                0x20000004                        . = ALIGN (0x4)
+                0x20000004                        _ebss = .
+                0x20000008                        . = ALIGN (0x8)
+                0x20005000                        _estack = (ORIGIN (RAM) + LENGTH (RAM))
+OUTPUT(firmware_cpp.elf elf32-littlearm)
+LOAD linker stubs
+
+.comment        0x00000000       0x45
+ .comment       0x00000000       0x45 sensor.o
+                                 0x46 (size before relaxing)
+
+.ARM.attributes
+                0x00000000       0x2d
+ .ARM.attributes
+                0x00000000       0x2d sensor.o

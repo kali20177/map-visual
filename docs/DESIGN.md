@@ -250,7 +250,7 @@ MapVisual/
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 脚手架 | 工程、esbuild、vitest、CI、fixtures 就位 | ✅ 2026-09-25 |
-| M1 GNU ld MVP | 检测/解析/尺寸分摊/demangle/列表排序过滤/汇总面板/快捷键 | ✅ 2026-09-25（13+3 fixtures 全绿，区域占用与 --print-memory-usage 一致） |
+| M1 GNU ld MVP | 检测/解析/尺寸分摊/demangle/列表排序过滤/汇总面板/快捷键 | ✅ 2026-09-25（19 fixtures 全绿：x86 13 + arm 5 + lld 1，区域占用与 --print-memory-usage 一致） |
 | M2 Keil armlink | AC5/AC6/EIDE、Grand Totals、Image component sizes 聚合 | 🔌 **接口已预留**（parser registry），待真实样例 |
 | M3 体验打磨 | 分组、导出、watch、系统库过滤、状态栏、进度条、降级提示页、右键菜单 | ✅ 2026-09-25 |
 | M4 第二梯队格式 | IAR ilink（需样例采集）、LLVM lld | ✅ lld（真实 23.1.2 产物验证）；🔌 IAR 接口已预留，待样例 |
@@ -281,3 +281,4 @@ MapVisual/
 4. **实测新增的格式形态**（均已进解析器与用例库）：binutils relax 注释独立成行（`0x10 (size before relaxing)`，无地址列）；链接器生成内容的 object 列是自由文本（`.glue_7 ... linker stubs`）；`.bss` 输出段头也带 `load address`（区域占用计算必须按 storage 过滤，否则 bss 双计入 Flash）。
 5. **demangle 引擎风格差异**：gecko-profiler-demangle 对模板省略返回类型、vtable 输出 `{vtable(T)}`（libiberty 为 `vtable for T`）、`_ZGV` 前缀未覆盖（已加前缀映射兜底 `guard variable for ...`）。测试向量以该引擎实际输出为准。
 6. **真实 ARM fixture 落地**：`test/fixtures/gnuld-arm/` 由 arm-none-eabi-gcc 13.3 实际构建，区域占用与 ld `--print-memory-usage` 输出精确一致（FLASH 4152 B / RAM 260 B），作为区域归属算法的验收基准。
+7. **审核轮（2026-09-25）新增格式形态与 fixtures**：`-fcommon` 构建的 COMMON 贡献行（` COMMON <vma> <size> <obj>`，段名无前导点，`*(COMMON)` 通配回显需跳过）已进 `CONTRIBUTION_RE` 并归 bss；新增 `firmware_common.map`（FLASH 44 / RAM 24）与 `firmware_cpp_sections.map`（FLASH 120 / RAM 4，`-ffunction-sections` C++，用于段名 mangled 回收）两个真实构建 fixture，黄金基准均为 `--print-memory-usage`。

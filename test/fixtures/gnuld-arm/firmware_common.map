@@ -1,0 +1,102 @@
+
+Allocating common symbols
+Common symbol       size              file
+
+b_common            0x10              common.o
+a_common            0x4               common.o
+
+There are no discarded input sections
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x00020000         xr
+RAM              0x20000000         0x00005000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD common.o
+START GROUP
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/libgcc.a
+LOAD /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/../../../../arm-none-eabi/lib/thumb/v7-m/nofp/libc.a
+END GROUP
+
+.isr_vector
+ *(.isr_vector)
+
+.text           0x08000000       0x28
+ *(.text*)
+ .text          0x08000000       0x24 common.o
+                0x08000000                add
+                0x08000004                main
+ *(.rodata*)
+ .rodata        0x08000024        0x3 common.o
+                0x08000024                msg
+                0x08000028                        . = ALIGN (0x4)
+ *fill*         0x08000027        0x1 
+                0x08000028                        _etext = .
+
+.glue_7         0x08000028        0x0
+ .glue_7        0x08000028        0x0 linker stubs
+
+.glue_7t        0x08000028        0x0
+ .glue_7t       0x08000028        0x0 linker stubs
+
+.vfp11_veneer   0x08000028        0x0
+ .vfp11_veneer  0x08000028        0x0 linker stubs
+
+.v4_bx          0x08000028        0x0
+ .v4_bx         0x08000028        0x0 linker stubs
+
+.iplt           0x08000028        0x0
+ .iplt          0x08000028        0x0 common.o
+
+.rel.dyn        0x08000028        0x0
+ .rel.iplt      0x08000028        0x0 common.o
+
+.ARM.extab
+ *(.ARM.extab* .gnu.linkonce.armextab.*)
+
+.ARM.exidx      0x08000028        0x0
+                0x08000028                        __exidx_start = .
+ *(.ARM.exidx*)
+                0x08000028                        __exidx_end = .
+                0x08000028                        _sidata = LOADADDR (.data)
+
+.data           0x20000000        0x4 load address 0x08000028
+                0x20000000                        . = ALIGN (0x4)
+                0x20000000                        _sdata = .
+ *(.data*)
+ .data          0x20000000        0x4 common.o
+                0x20000000                init_var
+                0x20000004                        . = ALIGN (0x4)
+                0x20000004                        _edata = .
+
+.igot.plt       0x20000004        0x0 load address 0x0800002c
+ .igot.plt      0x20000004        0x0 common.o
+
+.bss            0x20000004       0x14 load address 0x0800002c
+                0x20000004                        . = ALIGN (0x4)
+                0x20000004                        _sbss = .
+ *(.bss*)
+ .bss           0x20000004        0x0 common.o
+ *(COMMON)
+ COMMON         0x20000004       0x14 common.o
+                0x20000004                b_common
+                0x20000014                a_common
+                0x20000018                        . = ALIGN (0x4)
+                0x20000018                        _ebss = .
+                0x20000018                        . = ALIGN (0x8)
+                0x20005000                        _estack = (ORIGIN (RAM) + LENGTH (RAM))
+OUTPUT(firmware_common.elf elf32-littlearm)
+LOAD linker stubs
+
+.comment        0x00000000       0x45
+ .comment       0x00000000       0x45 common.o
+                                 0x46 (size before relaxing)
+
+.ARM.attributes
+                0x00000000       0x2d
+ .ARM.attributes
+                0x00000000       0x2d common.o

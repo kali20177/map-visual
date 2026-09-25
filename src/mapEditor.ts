@@ -26,6 +26,7 @@ function readSettings(): ParseSettings {
 interface PanelState {
     uri: vscode.Uri;
     doc: MapDocument | null;
+    reparse: () => Promise<void>;
 }
 
 export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<MapCustomDocument> {
@@ -46,8 +47,9 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         });
         vscode.workspace.onDidChangeConfiguration((e) => {
             if (e.affectsConfiguration('mapvisual')) {
-                for (const panel of [...this.panels.keys()]) {
-                    panel.dispose(); // reopen re-parses with the new settings
+                // Re-parse in place so panels keep their view state (sort/filter/scroll).
+                for (const state of [...this.panels.values()]) {
+                    void state.reparse();
                 }
             }
         });
@@ -66,8 +68,6 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         webviewPanel.title = path.basename(document.uri.fsPath);
         webview.html = this.getHtml(webview);
 
-        let parsedOnce = false;
-
         const parseAndSend = async (): Promise<void> => {
             void webview.postMessage({ type: 'parsing' });
             const settings = readSettings();
@@ -82,13 +82,18 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                     {
                         location: vscode.ProgressLocation.Window,
                         title: `MapVisual: parsing ${path.basename(document.uri.fsPath)}`,
+                        cancellable: true,
                     },
-                    (progress) =>
-                        this.worker.parse(req, (stage) => {
-                            progress.report({ message: stage });
+                    (progress, token) =>
+                        new Promise<MapDocument>((resolve, reject) => {
+                            token.onCancellationRequested(() => reject(new vscode.CancellationError()));
+                            this.worker
+                                .parse(req, (stage) => {
+                                    progress.report({ message: stage });
+                                })
+                                .then(resolve, reject);
                         }),
                 );
-                parsedOnce = true;
                 const state = this.panels.get(webviewPanel);
                 if (state) {
                     state.doc = doc;
@@ -98,14 +103,33 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 }
                 void webview.postMessage({ type: 'parseResult', doc });
             } catch (e) {
+                if (e instanceof vscode.CancellationError) {
+                    // Cancelling only abandons the wait: the worker job keeps
+                    // running to completion and later requests still queue
+                    // behind it (workerClient serializes per job).
+                    void webview.postMessage({ type: 'parseCancelled' });
+                    return;
+                }
                 const err = e as Error & { kind?: string };
                 void webview.postMessage({ type: 'parseError', error: { kind: err.kind ?? 'io', message: err.message } });
             }
         };
 
+        // 'ready' and the startup retry both request the first parse; the flag
+        // makes the second caller a no-op instead of parsing the map twice.
+        let initialParseStarted = false;
+        const parseOnce = (): void => {
+            if (initialParseStarted) {
+                return;
+            }
+            initialParseStarted = true;
+            void parseAndSend();
+        };
+
         // watch the file so rebuilds refresh the view in place
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(document.uri.fsPath), path.basename(document.uri.fsPath)));
         watcher.onDidChange(() => void parseAndSend());
+        watcher.onDidCreate(() => void parseAndSend());
         watcher.onDidDelete(() => {
             void webview.postMessage({ type: 'parseError', error: { kind: 'notfound', message: 'The map file was deleted on disk.' } });
         });
@@ -132,15 +156,15 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             }
         });
 
-        this.panels.set(webviewPanel, { uri: document.uri, doc: null });
+        this.panels.set(webviewPanel, { uri: document.uri, doc: null, reparse: parseAndSend });
 
         webview.onDidReceiveMessage((msg: WebviewToHost) => {
             switch (msg.type) {
                 case 'ready':
-                    void parseAndSend();
+                    parseOnce();
                     break;
                 case 'exportCsv':
-                    void this.exportCsv(msg.csv, msg.suggestedName);
+                    void this.exportCsv(msg.csv, msg.suggestedName, msg.file);
                     break;
                 case 'openAsText':
                     void vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', vscode.ViewColumn.Active);
@@ -155,9 +179,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
 
         // The webview posts 'ready' immediately; a brief retry covers slow script startup.
         const retry = setTimeout(() => {
-            if (!parsedOnce) {
-                void parseAndSend();
-            }
+            parseOnce();
         }, 1500);
         document.disposables.push(new vscode.Disposable(() => clearTimeout(retry)));
     }
@@ -184,6 +206,11 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         this.activePanel?.reveal(vscode.ViewColumn.Active);
     }
 
+    /** URI of the map shown in the focused custom editor, if any (commands run while a webview has focus). */
+    activeMapUri(): vscode.Uri | undefined {
+        return this.activePanel ? this.panels.get(this.activePanel)?.uri : undefined;
+    }
+
     private async revealSource(object: string, member: string | null): Promise<void> {
         const patterns = sourceGlobPatterns(object, member);
         if (patterns.length === 0) {
@@ -202,9 +229,13 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         void vscode.window.showInformationMessage(`MapVisual: no source file found for "${member ?? object}" in this workspace`);
     }
 
-    async exportCsv(csv: string, suggestedName: string): Promise<void> {
+    async exportCsv(csv: string, suggestedName: string, mapFile?: string): Promise<void> {
+        // Relative suggestions resolve against the map's own directory, not the
+        // extension host's cwd (multi-root workspaces have no single cwd).
+        const base = mapFile ? path.dirname(mapFile) : undefined;
+        const defaultUri = base && !path.isAbsolute(suggestedName) ? vscode.Uri.joinPath(vscode.Uri.file(base), suggestedName) : vscode.Uri.file(suggestedName);
         const target = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(suggestedName),
+            defaultUri,
             filters: { 'CSV': ['csv'] },
         });
         if (!target) {

@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 87 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 91 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 ## 目录
 
@@ -21,7 +21,7 @@ npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 - `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/`、`src/worker.ts` — worker 运行时，纯 Node，禁止 vscode
 - `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块
 - `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）
-- `test/unit/` — vitest；`test/fixtures/` — 17 个真实 map fixture（gnuld-x86 移植自 imgui-gl3-glfw3-base、gnuld-arm 由 build.sh 实际构建、lld/ 同理），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
+- `test/unit/` — vitest；`test/fixtures/` — 19 个真实 map fixture（gnuld-x86 移植自 imgui-gl3-glfw3-base、gnuld-arm 由 build.sh 实际构建、lld/ 同理），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
 - `docs/` — DESIGN（§13 实现偏差必读）、FORMATS（map 格式圣经）、RESEARCH
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）

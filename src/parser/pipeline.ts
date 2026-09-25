@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import type { MapDocument } from '../types';
 import { detectFormat } from './detect';
 import { Warnings } from './warnings';
-import { Demangler, demanglerAvailable, initDemangler, isMangled } from '../demangle';
+import { Demangler, demanglerAvailable, extractSectionSymbol, initDemangler, isMangled } from '../demangle';
 import { finalize } from '../analysis/analyze';
 import { getParser, PLANNED_FORMATS } from './registry';
 
@@ -91,8 +91,11 @@ export async function parseMapText(
     for (const sym of parsed.symbols) {
         sym.isSystem = SYSTEM_RE.test(sym.object) || (sym.archive != null && SYSTEM_RE.test(sym.archive));
         sym.isLto = LTO_OBJ_RE.test(sym.object);
-        if (sym.mangled == null && isMangled(sym.name)) {
-            sym.mangled = sym.name;
+        if (sym.mangled == null) {
+            // A symbol line inside a mangled section (`.text._ZN3app4mainEv`) only
+            // ever shows the demangled form — recover the mangled name from the
+            // section before falling back to the raw symbol name.
+            sym.mangled = extractSectionSymbol(sym.section) ?? (isMangled(sym.name) ? sym.name : null);
         }
         if (opts.demangle && sym.mangled != null) {
             sym.demangled = demangler.demangle(sym.mangled);

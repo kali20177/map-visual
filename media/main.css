@@ -54,6 +54,23 @@ body {
     background: var(--vscode-editor-background);
 }
 
+#mv-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+#mv-errorhost {
+    display: flex;
+    flex: 1;
+    overflow-y: auto;
+}
+
+#mv-errorhost[hidden] {
+    display: none;
+}
+
 /* ---------- toolbar ---------- */
 
 .mv-toolbar {
@@ -133,6 +150,12 @@ body {
 .mv-toggle:hover,
 .mv-btn:hover {
     filter: brightness(1.15);
+}
+
+.mv-toggle:disabled,
+.mv-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
 }
 
 .mv-toggle.on {
@@ -256,6 +279,25 @@ body {
     gap: 7px;
     padding: 2px 0;
     font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.mv-kind-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.mv-kind-row.off {
+    opacity: 0.45;
+}
+
+.mv-kind-row.off .mv-kind-size {
+    text-decoration: line-through;
+}
+
+.mv-kind-note {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
 }
 
 .mv-kind-size {
@@ -342,6 +384,11 @@ body {
     word-break: break-word;
 }
 
+.mv-warn-line {
+    font-family: var(--vscode-editor-font-family);
+    opacity: 0.8;
+}
+
 /* ---------- table ---------- */
 
 .mv-thead {
@@ -349,6 +396,7 @@ body {
     grid-template-columns: 92px minmax(220px, 1.4fr) 76px minmax(130px, 1fr) minmax(150px, 1fr) 108px;
     gap: 0 12px;
     padding: 5px 12px;
+    border-left: 2px solid transparent;
     border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
     background: var(--vscode-sideBar-background);
     font-size: 11px;
@@ -418,8 +466,26 @@ body {
     border-left: 2px solid transparent;
 }
 
+.mv-datarow {
+    cursor: pointer;
+}
+
 .mv-datarow:hover {
     background: var(--vscode-list-hoverBackground);
+}
+
+.mv-datarow:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.mv-row.mv-selected {
+    background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.mv-grouprow:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
 }
 
 .mv-datarow.k-code {
@@ -597,9 +663,6 @@ body {
     border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.15));
     font-weight: 600;
     cursor: pointer;
-    position: sticky;
-    top: 0;
-    z-index: 1;
 }
 
 .mv-grouprow:hover {
@@ -725,11 +788,6 @@ body {
     z-index: 1;
 }
 
-.mv-tm-node.more {
-    background: var(--mv-pad);
-    cursor: default;
-}
-
 .mv-tm-node.k-code {
     background: var(--mv-code);
 }
@@ -756,6 +814,12 @@ body {
 
 .mv-tm-node.k-meta {
     background: var(--mv-meta);
+}
+
+/* keep "+N smaller" cells grey even though their kind is meta (must come last) */
+.mv-tm-node.more {
+    background: var(--mv-pad);
+    cursor: default;
 }
 
 .mv-tm-label {
@@ -824,21 +888,16 @@ body {
 .mv-delta {
     font-family: var(--vscode-editor-font-family);
     font-variant-numeric: tabular-nums;
+    text-align: right;
+    font-weight: 600;
 }
 
-.mv-delta.up,
-.mv-delta-cell.up {
+.mv-delta.up {
     color: var(--mv-bss);
 }
 
-.mv-delta.down,
-.mv-delta-cell.down {
+.mv-delta.down {
     color: var(--mv-rodata);
-}
-
-.mv-delta-cell {
-    text-align: right;
-    font-weight: 600;
 }
 
 .mv-thead.mv-diff-head {

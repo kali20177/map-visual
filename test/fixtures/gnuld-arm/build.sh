@@ -38,5 +38,15 @@ arm-none-eabi-g++ $CFLAGS -ffunction-sections -fdata-sections \
   -Wl,--gc-sections,--no-demangle -Wl,-Map="$DIR/firmware_no_demangle.map" $LDFLAGS \
   main.o isr.o stubs.o libutil.a -lgcc -o firmware_nm.elf
 
+# 4) -fcommon: COMMON block contribution lines (` COMMON  <vma> <size> <obj>`)
+arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -fcommon -O1 -c "$DIR/common.c" -o common.o
+arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -fcommon common.o -T "$DIR/link.ld" -nostartfiles \
+  -Wl,-Map="$DIR/firmware_common.map" -Wl,--print-memory-usage -o firmware_common.elf
+
+# 5) -ffunction-sections C++: symbol lines inside mangled sections (`.text._ZN...`)
+arm-none-eabi-g++ -mcpu=cortex-m3 -mthumb -O0 -ffunction-sections -fdata-sections -c "$DIR/sensor.cpp" -o sensor.o
+arm-none-eabi-g++ -mcpu=cortex-m3 -mthumb -O0 sensor.o -T "$DIR/link.ld" -nostartfiles \
+  -Wl,-Map="$DIR/firmware_cpp_sections.map" -Wl,--print-memory-usage -o firmware_cpp.elf
+
 echo "fixtures written to $DIR"
 rm -rf "$BUILD"

@@ -5,7 +5,7 @@ import type { MapDocument, SymbolKind, SymbolRecord } from '../types';
  * No DOM / vscode API access here so it can be unit-tested in Node.
  */
 
-export type SortKey = 'size' | 'name' | 'addr' | 'section' | 'object';
+export type SortKey = 'size' | 'name' | 'addr' | 'section' | 'object' | 'kind';
 export type GroupBy = 'none' | 'object' | 'archive' | 'kind' | 'directory';
 
 export interface UiState {
@@ -24,7 +24,8 @@ export const DEFAULT_UI_STATE: UiState = {
     sortKey: 'size',
     sortDir: 'desc',
     filterText: '',
-    kinds: { code: true, rodata: true, data: true, bss: true, meta: true, pad: true, other: true },
+    // meta (debug/annotation, non-alloc) is folded by default per FORMATS §1.6
+    kinds: { code: true, rodata: true, data: true, bss: true, meta: false, pad: true, other: true },
     minSize: 0,
     groupBy: 'none',
     demangle: true,
@@ -99,6 +100,8 @@ function sortKeyOf(sym: SymbolRecord, key: SortKey, demangle: boolean): string |
             return sym.addr;
         case 'name':
             return displayName(sym, demangle).toLowerCase();
+        case 'kind':
+            return sym.kind;
         case 'section':
             return sym.section.toLowerCase();
         case 'object':
@@ -121,7 +124,7 @@ export function filterAndSort(doc: MapDocument, ui: UiState): RowView[] {
         }
         // stable tie-break: size desc, then address
         if (a.size !== b.size) {
-            return (b.size - a.size) * (key === 'size' ? 1 : 1);
+            return b.size - a.size;
         }
         return a.addr - b.addr;
     });

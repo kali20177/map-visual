@@ -11,9 +11,10 @@ import {
     toCsv,
     type GroupView,
     type ListItem,
+    type RowView,
     type UiState,
 } from './model';
-import { buildGroups, squarify } from './treemap';
+import { buildGroups, squarify, type TreemapItem } from './treemap';
 
 declare function acquireVsCodeApi(): { postMessage(msg: WebviewToHost): void };
 
@@ -22,6 +23,8 @@ const ROW_H = 24;
 const OVERSCAN = 10;
 
 const KIND_ORDER: SymbolKind[] = ['code', 'rodata', 'data', 'bss', 'pad', 'other', 'meta'];
+// kinds that occupy flash/ram storage; `meta` is non-alloc annotation data
+const MEMORY_KINDS: SymbolKind[] = KIND_ORDER.filter((k) => k !== 'meta');
 
 interface AppState {
     doc: MapDocument | null;
@@ -30,6 +33,10 @@ interface AppState {
     error: { kind: string; message: string } | null;
     view: 'list' | 'treemap';
     treemapGroupKey: string | null;
+    /** the parse produced demangled names — the C++ toggle is a no-op otherwise */
+    demangleAvailable: boolean;
+    /** indices into `visible` of ctrl/cmd-clicked rows, exported via the context menu */
+    selected: Set<number>;
 }
 
 const state: AppState = {
@@ -39,12 +46,18 @@ const state: AppState = {
     error: null,
     view: 'list',
     treemapGroupKey: null,
+    demangleAvailable: false,
+    selected: new Set(),
 };
 
 // ---- DOM handles ----
 const root = document.getElementById('app')!;
 
+// The shell lives in its own container so the error page can take over the
+// viewport without destroying the shell's DOM — cached handles below stay
+// attached and a later parseResult simply un-hides the shell (B2).
 root.innerHTML = `
+  <div id="mv-shell">
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="mv-file" class="mv-file">—</span><span id="mv-format" class="mv-chip mv-chip-format"></span></div>
     <input id="mv-search" class="mv-search" type="text" placeholder="Filter symbols (mangled or demangled)…" spellcheck="false" />
@@ -77,15 +90,19 @@ root.innerHTML = `
   </div>
   <div class="mv-footer" id="mv-footer"></div>
   <div id="mv-toast" class="mv-toast"></div>
+  </div>
+  <div id="mv-errorhost" hidden></div>
 `;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+const shellEl = $('mv-shell');
+const errorHostEl = $('mv-errorhost');
 const fileEl = $('mv-file');
 const formatEl = $<HTMLSpanElement>('mv-format');
 const searchEl = $<HTMLInputElement>('mv-search');
 const groupEl = $<HTMLSelectElement>('mv-group');
 const minSizeEl = $<HTMLSelectElement>('mv-minsize');
-const demangleEl = $('mv-demangle');
+const demangleEl = $<HTMLButtonElement>('mv-demangle');
 const systemEl = $('mv-system');
 const discardedEl = $('mv-discarded');
 const viewEl = $('mv-view');
@@ -118,7 +135,7 @@ function renderHeader(): void {
     const cols: Array<[string, string, boolean]> = [
         ['size', 'Size', true],
         ['name', 'Symbol', true],
-        ['', 'Kind', false],
+        ['kind', 'Kind', true],
         ['section', 'Section', true],
         ['object', 'Object / Library', true],
         ['addr', 'Address', true],
@@ -171,9 +188,17 @@ function renderSummary(): void {
                   .join('')
             : part('Flash (est.)', t.flash, null, 'flash') + part('RAM (est.)', t.ram, null, 'ram');
 
-    const kindRows = KIND_ORDER.filter((k) => t.kindTotals[k] > 0 || k === 'code' || k === 'data' || k === 'bss' || k === 'rodata');
-    const grand = Math.max(1, t.flash + t.ram);
-    const stacked = KIND_ORDER.map((k) => {
+    const kindRow = (k: SymbolKind, cls: string): string => {
+        const size = t.kindTotals[k];
+        const on = state.ui.kinds[k];
+        return `<div class="mv-kind-row${on ? '' : ' off'}" data-kind="${k}" role="checkbox" aria-checked="${on}" title="Toggle ${k} rows">
+          <span class="mv-dot mv-k-${k}"></span>${k}${cls ? ` <span class="mv-kind-note">${cls}</span>` : ''}<span class="mv-kind-size">${formatBytes(size)}</span></div>`;
+    };
+    // Bar and total are normalized over storage-occupying kinds, summed by
+    // kind: a .data symbol counts once even though it occupies both flash and
+    // RAM (the per-storage split lives in the Memory section above).
+    const grand = Math.max(1, MEMORY_KINDS.reduce((sum, k) => sum + t.kindTotals[k], 0));
+    const stacked = MEMORY_KINDS.map((k) => {
         const size = t.kindTotals[k];
         if (size === 0) {
             return '';
@@ -181,8 +206,13 @@ function renderSummary(): void {
         return `<div class="mv-kseg mv-k-${k}" style="width:${(size / grand) * 100}%"></div>`;
     }).join('');
 
+    const kindRows = MEMORY_KINDS.filter((k) => t.kindTotals[k] > 0 || k === 'code' || k === 'data' || k === 'bss' || k === 'rodata')
+        .map((k) => kindRow(k, ''))
+        .join('');
+    const metaRow = t.kindTotals.meta > 0 ? kindRow('meta', 'non-alloc') : '';
+
     const top = doc.symbols
-        .filter((s) => s.status === 'kept' && !s.isFill && s.size > 0)
+        .filter((s) => s.status === 'kept' && !s.isFill && s.size > 0 && state.ui.kinds[s.kind])
         .sort((a, b) => b.size - a.size)
         .slice(0, 10);
     const topHtml = top
@@ -195,20 +225,16 @@ function renderSummary(): void {
     const warnHtml =
         doc.warnings.length > 0
             ? `<div class="mv-warn"><div class="mv-warn-head">Parsing notes</div>${doc.warnings
-                  .map((w) => `<div class="mv-warn-item">· ${escapeHtml(w.message)}${w.count > 1 ? ` ×${w.count}` : ''}</div>`)
+                  .map((w) => `<div class="mv-warn-item">· ${w.line != null ? `<span class="mv-warn-line">L${w.line}</span> ` : ''}${escapeHtml(w.message)}${w.count > 1 ? ` ×${w.count}` : ''}</div>`)
                   .join('')}</div>`
             : '';
 
     summaryEl.innerHTML = `
       <div class="mv-section"><div class="mv-section-title">Memory</div>${regionHtml}</div>
-      <div class="mv-section"><div class="mv-section-title">Composition <span class="mv-section-sub">${formatBytes(grand)} total</span></div>
+      <div class="mv-section"><div class="mv-section-title">Composition <span class="mv-section-sub">${formatBytes(grand)} allocated</span></div>
         <div class="mv-kbar">${stacked}</div>
-        ${kindRows
-            .map((k) => {
-                const size = t.kindTotals[k];
-                return `<div class="mv-kind-row"><span class="mv-dot mv-k-${k}"></span>${k}<span class="mv-kind-size">${formatBytes(size)}</span></div>`;
-            })
-            .join('')}
+        ${kindRows}
+        ${metaRow}
       </div>
       <div class="mv-section"><div class="mv-section-title">Top symbols</div>${topHtml || '<div class="mv-empty">—</div>'}</div>
       ${warnHtml}`;
@@ -238,7 +264,8 @@ function renderWindow(): void {
             const g: GroupView = entry.group;
             const collapsed = state.collapsed.has(g.key);
             html += `
-        <div class="mv-row mv-grouprow" data-group="${escapeAttr(g.key)}" style="top:${top}px">
+        <div class="mv-row mv-grouprow" data-group="${escapeAttr(g.key)}" data-i="${i}" style="top:${top}px" tabindex="0" role="button" aria-expanded="${collapsed ? 'false' : 'true'}"
+             aria-label="${escapeAttr(g.label)}, ${g.count} symbols, ${formatBytes(g.size)}">
           <span class="mv-chevron ${collapsed ? 'collapsed' : ''}">▾</span>
           <span class="mv-group-label">${escapeHtml(g.label)}</span>
           <span class="mv-group-meta">${g.count} symbols · ${formatBytes(g.size)}</span>
@@ -247,7 +274,8 @@ function renderWindow(): void {
             const { sym, display, secondary } = entry.row;
             const objLabel = sym.archive ? `${escapeHtml(baseDisplay(sym.archive))} › ${escapeHtml(sym.member ?? '')}` : escapeHtml(baseDisplay(sym.object));
             html += `
-        <div class="mv-row mv-datarow k-${sym.kind}${sym.status === 'discarded' ? ' discarded' : ''}" data-i="${i}" style="top:${top}px">
+        <div class="mv-row mv-datarow k-${sym.kind}${sym.status === 'discarded' ? ' discarded' : ''}${state.selected.has(i) ? ' mv-selected' : ''}" data-i="${i}" style="top:${top}px" tabindex="0"
+             title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}" aria-label="${escapeAttr(`${display}, ${formatBytes(sym.size)}, ${sym.section}`)}">
           <div class="mv-td mv-td-size" title="0x${sym.size.toString(16)} (${sym.size} B)">${formatBytes(sym.size)}</div>
           <div class="mv-td mv-td-symbol" title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}">
             <span class="mv-kindbar k-${sym.kind}"></span>
@@ -272,8 +300,10 @@ function renderFooter(): void {
     }
     const shown = visible.filter((v) => v.row).length;
     const t = doc.totals;
+    // the denominator must cover whatever the numerator can show
+    const total = state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount;
     const parts = [
-        `${shown} / ${t.keptCount} symbols`,
+        `${shown} / ${total} symbols`,
         `Flash ${formatBytes(t.flash)}`,
         `RAM ${formatBytes(t.ram)}`,
         t.discardedCount > 0 ? `${t.discardedCount} removed by gc` : '',
@@ -317,8 +347,7 @@ function renderTreemap(): void {
             return;
         }
         html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1">‹ all groups</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${group.items.length} symbols · ${formatBytes(group.size)}</span></div>`;
-        const capped = capItems(group.items);
-        const rects = squarify(capped.items, { x: rect.x, y: rect.y + 28, w: rect.w, h: rect.h - 28 });
+        const rects = squarify(capItems(group.items), { x: rect.x, y: rect.y + 28, w: rect.w, h: rect.h - 28 });
         html += rects.map((r) => tmNodeHtml(r, r.key, r.label)).join('');
     } else {
         const items = groups.map((g) => ({ key: g.key, label: g.label, size: g.size, kind: g.kind }));
@@ -329,15 +358,15 @@ function renderTreemap(): void {
     spacerEl.style.height = `${tbodyEl.clientHeight}px`;
 }
 
-function capItems(items: Array<{ key: string; label: string; size: number; kind: SymbolKind }>): { items: Array<{ key: string; label: string; size: number; kind: SymbolKind }>; merged: number } {
+function capItems(items: TreemapItem[]): TreemapItem[] {
     const MAX = 250;
     if (items.length <= MAX) {
-        return { items, merged: 0 };
+        return items;
     }
     const keep = items.slice().sort((a, b) => b.size - a.size).slice(0, MAX);
     const restSize = items.reduce((a, b) => a + b.size, 0) - keep.reduce((a, b) => a + b.size, 0);
     keep.push({ key: '__more__', label: `+${items.length - MAX} smaller`, size: restSize, kind: 'meta' });
-    return { items: keep, merged: items.length - MAX };
+    return keep;
 }
 
 function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolKind; x: number; y: number; w: number; h: number }, dataKey: string, title: string): string {
@@ -345,7 +374,7 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
     const short = showLabel && r.w > 120 ? r.label : r.label.length > 14 ? r.label.slice(0, 13) + '…' : r.label;
     const isMore = r.key === '__more__';
     return `
-    <div class="mv-tm-node k-${r.kind}${isMore ? ' more' : ''}" data-tm-key="${escapeAttr(dataKey)}" data-tm-group="${r.kind === 'meta' && isMore ? '0' : '1'}"
+    <div class="mv-tm-node k-${r.kind}${isMore ? ' more' : ''}" data-tm-key="${escapeAttr(dataKey)}" data-tm-copy="${escapeAttr(r.label)}"
          style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px" title="${escapeAttr(title)}">
       ${showLabel ? `<span class="mv-tm-label">${escapeHtml(short)}${showLabel && r.w > 150 ? ` <em>${formatBytes(r.size)}</em>` : ''}</span>` : ''}
     </div>`;
@@ -359,8 +388,9 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
             return; // "+N smaller" cells are not drillable
         }
         if (state.treemapGroupKey) {
-            // leaf: copy the symbol name
-            const label = (tmNode.querySelector('.mv-tm-label')?.textContent ?? key).trim();
+            // leaf: copy the clean symbol name (not the rendered label, which
+            // embeds the size — and not the internal key on unlabeled cells)
+            const label = tmNode.dataset.tmCopy ?? (tmNode.querySelector('.mv-tm-label')?.textContent ?? key).trim();
             void navigator.clipboard?.writeText(label).then(() => toast(`Copied: ${label.length > 60 ? label.slice(0, 57) + '…' : label}`));
         } else {
             state.treemapGroupKey = key;
@@ -378,13 +408,15 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
 function showError(err: { kind: string; message: string }): void {
     state.error = err;
     const isJson = err.kind === 'json';
-    root.innerHTML = `
+    shellEl.style.display = 'none';
+    errorHostEl.innerHTML = `
     <div class="mv-error">
       <div class="mv-error-title">${isJson ? 'This is probably not a linker map' : 'Could not parse this map file'}</div>
       <div class="mv-error-msg">${escapeHtml(err.message)}</div>
       ${isJson ? '<button id="mv-openas-text" class="mv-btn">Open as text</button>' : ''}
     </div>`;
-    const btn = document.getElementById('mv-openas-text');
+    errorHostEl.hidden = false;
+    const btn = errorHostEl.querySelector('#mv-openas-text');
     btn?.addEventListener('click', () => post({ type: 'openAsText' }));
 }
 
@@ -392,28 +424,36 @@ function showError(err: { kind: string; message: string }): void {
 
 searchEl.addEventListener('input', () => {
     state.ui.filterText = searchEl.value;
+    state.selected.clear();
     scheduleRender();
 });
 groupEl.addEventListener('change', () => {
     state.ui.groupBy = groupEl.value as UiState['groupBy'];
+    state.selected.clear();
     renderAll();
 });
 minSizeEl.addEventListener('change', () => {
     state.ui.minSize = parseInt(minSizeEl.value, 10) || 0;
+    state.selected.clear();
     renderAll();
 });
 demangleEl.addEventListener('click', () => {
+    if (!state.demangleAvailable) {
+        return;
+    }
     state.ui.demangle = !state.ui.demangle;
     syncToggles();
     renderAll();
 });
 systemEl.addEventListener('click', () => {
     state.ui.hideSystem = !state.ui.hideSystem;
+    state.selected.clear();
     syncToggles();
     renderAll();
 });
 discardedEl.addEventListener('click', () => {
     state.ui.showDiscarded = !state.ui.showDiscarded;
+    state.selected.clear();
     syncToggles();
     renderAll();
 });
@@ -431,7 +471,7 @@ exportEl.addEventListener('click', () => {
     const rows = buildView(doc, state.ui)
         .map((item) => (item.kind === 'row' ? item.row : item.rows))
         .flat();
-    post({ type: 'exportCsv', csv: toCsv(rows, state.ui.demangle), suggestedName: baseDisplay(doc.file).replace(/\.map$/i, '') + '.csv' });
+    post({ type: 'exportCsv', csv: toCsv(rows, state.ui.demangle), suggestedName: baseDisplay(doc.file).replace(/\.map$/i, '') + '.csv', file: doc.file });
 });
 
 theadEl.addEventListener('click', (ev) => {
@@ -446,6 +486,7 @@ theadEl.addEventListener('click', (ev) => {
         state.ui.sortKey = key;
         state.ui.sortDir = key === 'size' ? 'desc' : 'asc';
     }
+    state.selected.clear();
     renderHeader();
     renderRows();
     renderFooter();
@@ -473,6 +514,16 @@ tbodyEl.addEventListener('click', (ev) => {
     if (!entry?.row) {
         return;
     }
+    if (ev.ctrlKey || ev.metaKey) {
+        const i = parseInt(rowEl.dataset.i!, 10);
+        if (state.selected.has(i)) {
+            state.selected.delete(i);
+        } else {
+            state.selected.add(i);
+        }
+        renderWindow();
+        return;
+    }
     const sym = entry.row.sym;
     const alt = ev.altKey;
     const text = alt ? (sym.mangled ?? sym.name) : entry.row.display;
@@ -492,7 +543,8 @@ function openMenu(x: number, y: number, items: Array<{ label: string; action: ()
     closeMenu();
     menuEl = document.createElement('div');
     menuEl.className = 'mv-context-menu';
-    menuEl.innerHTML = items.map((it, i) => `<div class="mv-cm-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join('');
+    menuEl.setAttribute('role', 'menu');
+    menuEl.innerHTML = items.map((it, i) => `<div class="mv-cm-item" data-i="${i}" role="menuitem">${escapeHtml(it.label)}</div>`).join('');
     document.body.appendChild(menuEl);
     const rect = menuEl.getBoundingClientRect();
     menuEl.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
@@ -517,6 +569,58 @@ function truncateLabel(s: string | null): string {
     return s.length > 34 ? s.slice(0, 31) + '…' : s;
 }
 
+function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
+    const sym = entry.row.sym;
+    const display = entry.row.display;
+    const objBase = baseDisplay(sym.member ?? sym.object);
+    const items: Array<{ label: string; action: () => void }> = [
+        { label: `Copy demangled  ${truncateLabel(display)}`, action: () => copyText(display) },
+        { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
+        { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
+        {
+            label: `Filter by object  ${truncateLabel(objBase)}`,
+            action: () => {
+                searchEl.value = objBase;
+                state.ui.filterText = searchEl.value;
+                state.selected.clear();
+                scheduleRender();
+            },
+        },
+    ];
+    if (state.selected.size > 0) {
+        items.push({
+            label: `Export selected rows as CSV (${state.selected.size})`,
+            action: () => {
+                const rows = [...state.selected].sort((a, b) => a - b).map((i) => visible[i]?.row).filter((r): r is RowView => r != null);
+                if (rows.length === 0 || !state.doc) {
+                    return;
+                }
+                post({ type: 'exportCsv', csv: toCsv(rows, state.ui.demangle), suggestedName: baseDisplay(state.doc.file).replace(/\.map$/i, '') + '-selection.csv', file: state.doc.file });
+            },
+        });
+    }
+    items.push({ label: 'Go to source', action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) });
+    openMenu(x, y, items);
+}
+
+function rowEntryAt(rowEl: HTMLElement): { row: RowView } | null {
+    const entry = visible[parseInt(rowEl.dataset.i!, 10)];
+    return entry?.row ? { row: entry.row } : null;
+}
+
+/** Move row focus to a virtualized index, scrolling it into the rendered window first. */
+function focusRow(index: number): void {
+    const viewportRows = Math.max(1, Math.floor(tbodyEl.clientHeight / ROW_H));
+    const top = Math.floor(tbodyEl.scrollTop / ROW_H);
+    if (index < top) {
+        tbodyEl.scrollTop = index * ROW_H;
+    } else if (index >= top + viewportRows) {
+        tbodyEl.scrollTop = Math.max(0, (index - viewportRows + 1) * ROW_H);
+    }
+    renderWindow();
+    (rowsEl.querySelector(`[data-i="${index}"]`) as HTMLElement | null)?.focus();
+}
+
 tbodyEl.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
     if (state.view !== 'list') {
@@ -526,32 +630,21 @@ tbodyEl.addEventListener('contextmenu', (ev) => {
     if (!rowEl) {
         return;
     }
-    const entry = visible[parseInt(rowEl.dataset.i!, 10)];
-    if (!entry?.row) {
-        return;
+    const entry = rowEntryAt(rowEl);
+    if (entry) {
+        openRowMenu(ev.clientX, ev.clientY, entry);
     }
-    const sym = entry.row!.sym;
-    const display = entry.row!.display;
-    const objBase = baseDisplay(sym.member ?? sym.object);
-    openMenu(ev.clientX, ev.clientY, [
-        { label: `Copy demangled  ${truncateLabel(display)}`, action: () => copyText(display) },
-        { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
-        { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
-        {
-            label: `Filter by object  ${truncateLabel(objBase)}`,
-            action: () => {
-                searchEl.value = objBase;
-                state.ui.filterText = searchEl.value;
-                scheduleRender();
-            },
-        },
-        { label: 'Go to source', action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) },
-    ]);
 });
 document.addEventListener('click', closeMenu);
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') {
         closeMenu();
+        if (state.selected.size > 0) {
+            state.selected.clear();
+            if (state.view === 'list') {
+                renderWindow();
+            }
+        }
     }
 });
 
@@ -563,7 +656,49 @@ document.addEventListener('keydown', (ev) => {
     }
 });
 
+// keyboard access for rows: arrows move focus across the virtualized window,
+// Enter copies/activates, Shift+F10 / ContextMenu opens the row menu
+tbodyEl.addEventListener('keydown', (ev) => {
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) {
+        return;
+    }
+    const target = ev.target as HTMLElement;
+    const rowEl = target.closest('[data-i]') as HTMLElement | null;
+    if (!rowEl) {
+        return;
+    }
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || ev.key === 'Home' || ev.key === 'End') {
+        ev.preventDefault();
+        const current = parseInt(rowEl.dataset.i!, 10);
+        const next = ev.key === 'ArrowDown' ? current + 1 : ev.key === 'ArrowUp' ? current - 1 : ev.key === 'Home' ? 0 : visible.length - 1;
+        if (next >= 0 && next < visible.length && next !== current) {
+            focusRow(next);
+        }
+    } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        rowEl.click();
+    } else if ((ev.key === 'F10' && ev.shiftKey) || ev.key === 'ContextMenu') {
+        ev.preventDefault();
+        const entry = rowEntryAt(rowEl);
+        if (entry) {
+            const rect = rowEl.getBoundingClientRect();
+            openRowMenu(rect.left + 8, rect.top + rect.height / 2, entry);
+        }
+    }
+});
+
+// re-apply the current view when the panel is resized without any interaction
+const resizeObserver = new ResizeObserver(() => scheduleRender());
+resizeObserver.observe(tbodyEl);
+
 summaryEl.addEventListener('click', (ev) => {
+    const kindRow = (ev.target as HTMLElement).closest('[data-kind]') as HTMLElement | null;
+    if (kindRow) {
+        const k = kindRow.dataset.kind as SymbolKind;
+        state.ui.kinds[k] = !state.ui.kinds[k];
+        renderAll();
+        return;
+    }
     const top = (ev.target as HTMLElement).closest('[data-filter]') as HTMLElement | null;
     if (top) {
         searchEl.value = top.dataset.filter!;
@@ -573,7 +708,12 @@ summaryEl.addEventListener('click', (ev) => {
 });
 
 function syncToggles(): void {
-    demangleEl.classList.toggle('on', state.ui.demangle);
+    demangleEl.classList.toggle('on', state.ui.demangle && state.demangleAvailable);
+    // without demangled names in the doc the toggle would silently do nothing
+    demangleEl.disabled = !state.demangleAvailable;
+    demangleEl.title = state.demangleAvailable
+        ? 'Toggle C++ demangling'
+        : 'No demangled names in this parse — enable "mapvisual.demangle" in settings and reopen';
     systemEl.classList.toggle('on', state.ui.hideSystem);
     discardedEl.classList.toggle('on', state.ui.showDiscarded);
 }
@@ -613,12 +753,24 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     if (msg.type === 'parseResult') {
         state.doc = msg.doc;
         state.error = null;
+        // bring the shell back if an error page took over (B2), then repaint
+        errorHostEl.hidden = true;
+        errorHostEl.replaceChildren();
+        shellEl.style.display = '';
+        state.demangleAvailable = msg.doc.symbols.some((s) => s.demangled != null);
+        state.selected.clear();
         fileEl.textContent = baseDisplay(msg.doc.file);
         formatEl.textContent = msg.doc.format;
         syncToggles();
         renderAll();
     } else if (msg.type === 'parseError') {
         showError(msg.error);
+    } else if (msg.type === 'parseCancelled') {
+        if (state.doc) {
+            renderFooter();
+        } else {
+            footerEl.textContent = '';
+        }
     } else if (msg.type === 'parsing') {
         footerEl.innerHTML = '<span class="mv-parsing">Parsing…</span>';
     }

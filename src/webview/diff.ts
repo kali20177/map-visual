@@ -15,14 +15,14 @@ interface DiffState {
     statuses: Set<DiffStatus>;
 }
 
-const state: DiffState = { diff: null, filterText: '', statuses: new Set(STATUS_ORDER) };
+const state: DiffState = { diff: null, filterText: '', statuses: new Set(STATUS_ORDER.filter((s) => s !== 'same')) };
 
 const root = document.getElementById('app')!;
 root.innerHTML = `
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="dv-files" class="mv-file">—</span></div>
     <input id="dv-search" class="mv-search" type="text" placeholder="Filter symbols…" spellcheck="false" />
-    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status on" data-status="${s}">${s}</button>`).join('')}
+    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status${state.statuses.has(s) ? ' on' : ''}" data-status="${s}">${s}</button>`).join('')}
     <button id="dv-export" class="mv-btn" title="Export the diff as CSV">CSV</button>
   </div>
   <div class="mv-diff-summary" id="dv-summary"></div>
@@ -34,6 +34,7 @@ root.innerHTML = `
     <div class="mv-tbody" id="dv-tbody"><div class="mv-spacer" id="dv-spacer"><div class="mv-rows" id="dv-rows"></div></div></div>
   </div>
   <div class="mv-footer" id="dv-footer"></div>
+  <div id="dv-toast" class="mv-toast"></div>
 `;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -44,11 +45,18 @@ const tbodyEl = $('dv-tbody');
 const spacerEl = $('dv-spacer');
 const rowsEl = $('dv-rows');
 const footerEl = $('dv-footer');
+const toastEl = $('dv-toast');
 
 let visible: DiffRow[] = [];
 
 function post(msg: WebviewToHost): void {
     vscode.postMessage(msg);
+}
+
+function toast(text: string): void {
+    toastEl.textContent = text;
+    toastEl.classList.add('visible');
+    window.setTimeout(() => toastEl.classList.remove('visible'), 1400);
 }
 
 function signed(n: number): string {
@@ -105,7 +113,7 @@ function renderWindow(): void {
         const objLabel = r.objectB ?? r.objectA ?? '';
         html += `
       <div class="mv-row mv-datarow diff-${r.status}" data-i="${i}" style="top:${i * ROW_H}px">
-        <div class="mv-td mv-mono mv-delta-cell ${deltaCls}">${r.status === 'same' ? '—' : signed(r.delta)}</div>
+        <div class="mv-td mv-mono mv-delta ${deltaCls}">${r.status === 'same' ? '—' : signed(r.delta)}</div>
         <div class="mv-td mv-mono">${r.status === 'added' ? '—' : formatBytes(r.sizeA)}</div>
         <div class="mv-td mv-mono">${r.status === 'removed' ? '—' : formatBytes(r.sizeB)}</div>
         <div class="mv-td mv-td-symbol">
@@ -128,7 +136,7 @@ tbodyEl.addEventListener('click', (ev) => {
     }
     const r = visible[parseInt(rowEl.dataset.i!, 10)];
     if (r) {
-        void navigator.clipboard?.writeText(r.name).then(() => undefined);
+        void navigator.clipboard?.writeText(r.name).then(() => toast(`Copied: ${r.name.length > 60 ? r.name.slice(0, 57) + '…' : r.name}`));
     }
 });
 

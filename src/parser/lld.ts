@@ -95,7 +95,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         }
     };
 
-    for (const rawLine of text.split('\n')) {
+    for (const [lineNo, rawLine] of text.split('\n').entries()) {
         const line = rawLine.replace(/\r$/, '');
         if (line.length === 0) {
             continue;
@@ -104,7 +104,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         if (!row) {
             // header line and any annotations
             if (line.includes(':') && !line.includes('VMA')) {
-                warnings.add('unrecognized line', line.trim());
+                warnings.add('unrecognized line', line.trim(), lineNo + 1);
             }
             continue;
         }
@@ -139,12 +139,12 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         if (current) {
             current.symbols.push({ name: content, addr: vma, size });
         } else {
-            warnings.add('symbol row without a preceding input section', line.trim());
+            warnings.add('symbol row without a preceding input section', line.trim(), lineNo + 1);
         }
     }
     flush();
 
-    // Note: input rows without symbol children get size 0 in their
+    // Input rows without symbol children keep their own size in the
     // section-level row; lld never reports fills in the map.
     for (const sym of symbols) {
         if (sym.fromSectionName) {

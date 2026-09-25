@@ -17,15 +17,15 @@ export type WorkerToHost =
 export type HostToWebview =
     | { type: 'parseResult'; doc: MapDocument }
     | { type: 'parseError'; error: { kind: string; message: string } }
+    | { type: 'parseCancelled' }
     | { type: 'parsing' }
     | { type: 'diffResult'; diff: DiffResult };
 
 /** webview → extension host */
 export type WebviewToHost =
     | { type: 'ready' }
-    | { type: 'exportCsv'; csv: string; suggestedName: string }
+    | { type: 'exportCsv'; csv: string; suggestedName: string; file?: string }
     | { type: 'openAsText' }
-    | { type: 'revealObject'; object: string }
     | { type: 'revealSource'; object: string; member: string | null };
 
 /** Legacy alias kept for the worker entry signature. */

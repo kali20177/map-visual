@@ -2,14 +2,14 @@
 
 嵌入式开发者的 VSCode map 文件阅读器：**快捷键一键打开链接器 map，以可排序、可过滤、可分组的列表精确查看每个符号的 Flash/RAM 占用，开箱即用的 C++ 名称还原**。
 
-**状态：MVP 已实现**（GNU ld + LLVM lld 解析器、虚拟列表 UI、WASM demangle 全部可用并通过 65 项测试；lld 已用真实 ld.lld 23.1.2 产物验证）。Keil armlink / IAR 按里程碑推进。
+**状态：MVP 已实现**（GNU ld + LLVM lld 解析器、虚拟列表 UI、WASM demangle 全部可用并通过 91 项测试；lld 已用真实 ld.lld 23.1.2 产物验证）。Keil armlink / IAR 按里程碑推进。
 
 ## 快速开始
 
 ```bash
 npm install
 npm run compile     # esbuild 打包 extension / worker / webview
-npm test            # vitest，65 项单测（含 17 个真实 map fixture）
+npm test            # vitest，91 项单测（含 19 个真实 map fixture）
 ```
 
 调试运行：VSCode 打开本目录按 `F5`（扩展开发宿主），在工程里放一个 `.map` 文件，`Alt+M` 或双击打开。

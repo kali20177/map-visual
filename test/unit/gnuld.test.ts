@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allocateSizes } from '../../src/parser/gnuld';
+import { allocateSizes, parseGnuLd } from '../../src/parser/gnuld';
 import { classifySection } from '../../src/parser/classify';
 import { Warnings } from '../../src/parser/warnings';
 import { discarded, findSym, kept, parseFixture } from './helpers';
@@ -198,6 +198,54 @@ describe('GNU ld — arm-none-eabi corpus (real embedded builds)', () => {
         const memcpy = findSym(doc, 'memcpy');
         expect(memcpy!.size).toBe(0x14);
         expect(memcpy!.storage).toContain('flash');
+    });
+});
+
+describe('GNU ld — COMMON contributions and diagnostics', () => {
+    it('parses -fcommon COMMON blocks as bss with exact RAM (firmware_common.map)', async () => {
+        const doc = await parseFixture('gnuld-arm/firmware_common.map');
+        const bc = findSym(doc, 'b_common');
+        const ac = findSym(doc, 'a_common');
+        expect(bc).toBeDefined();
+        expect(bc!.section).toBe('COMMON');
+        expect(bc!.kind).toBe('bss');
+        expect(bc!.size).toBe(16);
+        expect(bc!.storage).toEqual(['ram']);
+        expect(ac!.size).toBe(4);
+        // ld --print-memory-usage golden: FLASH 44 B / RAM 24 B (.data 4 + COMMON 20)
+        expect(doc.totals.flash).toBe(44);
+        expect(doc.totals.ram).toBe(24);
+        expect(doc.warnings).toEqual([]);
+    });
+
+    it('skips wildcard object echoes without warning (x86 corpus)', async () => {
+        const doc = await parseFixture('gnuld-x86/basic/test_simple.map');
+        expect(doc.warnings).toEqual([]);
+    });
+
+    it('recovers mangled forms for symbol lines inside mangled sections', async () => {
+        const doc = await parseFixture('gnuld-x86/sections/test_simple_sections.map');
+        const add = findSym(doc, 'add(int, int)');
+        expect(add).toBeDefined();
+        expect(add!.mangled).toBe('_Z3addii');
+        const cpp = await parseFixture('gnuld-arm/firmware_cpp_sections.map');
+        const next = findSym(cpp, 'app::Sensor::next(int)');
+        expect(next).toBeDefined();
+        expect(next!.section).toBe('.text._ZN3app6Sensor4nextEi');
+        expect(next!.mangled).toBe('_ZN3app6Sensor4nextEi');
+        const clamp = findSym(cpp, 'int app::clamp_value<int>(int, int, int)');
+        expect(clamp!.mangled).toBe('_ZN3app11clamp_valueIiEET_S1_S1_S1_');
+        // ld --print-memory-usage golden: FLASH 120 B / RAM 4 B
+        expect(cpp.totals.flash).toBe(120);
+        expect(cpp.totals.ram).toBe(4);
+    });
+
+    it('attaches line numbers to line-level warnings', () => {
+        const w = new Warnings();
+        parseGnuLd('Linker script and memory map\n\n.text 0x1000 0x10 a.o\n\n ???not a parseable line\n', w);
+        const list = w.list();
+        expect(list[0].message).toBe('unrecognized line');
+        expect(list[0].line).toBe(5);
     });
 });
 

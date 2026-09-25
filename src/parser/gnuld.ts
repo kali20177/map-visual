@@ -11,7 +11,9 @@ import type { Warnings } from './warnings';
 
 const OUTPUT_SECTION_RE =
     /^(\.[^\s]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+load address\s+0x([0-9a-fA-F]+))?(?:\s*\(size before (?:relaxing|filtering) 0x[0-9a-fA-F]+\))?(?:\s+[a-zA-Z].*)?\s*$/;
-const CONTRIBUTION_RE = /^\s+(\.[^\s]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
+// COMMON / LARGE_COMMON contributions appear under `-fcommon` and carry no
+// leading dot — classifySection maps both to bss.
+const CONTRIBUTION_RE = /^\s+((?:\.[^\s]+)|COMMON|LARGE_COMMON)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const CONTINUATION_RE = /^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const SECTION_NAME_RE = /^\s+(\.[^\s]+)\s*$/;
 const SYMBOL_RE = /^\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
@@ -194,7 +196,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         });
     };
 
-    for (const rawLine of lines) {
+    for (const [lineNo, rawLine] of lines.entries()) {
         const line = rawLine.replace(/\r$/, '');
         if (line.length === 0) {
             continue;
@@ -297,8 +299,8 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     fills.push({ vma: parseInt(fill[1], 16), size: parseInt(fill[2], 16), section: currentSectionHeader });
                     break;
                 }
-                if (trimmed.startsWith('*(')) {
-                    // wildcard echo — informational only
+                if (trimmed.startsWith('*') && trimmed.includes('(')) {
+                    // wildcard / object-list echo (`*(.text*)`, `*crtbegin.o(.ctors)`) — informational only
                     break;
                 }
                 if (trimmed.startsWith('[!provide]')) {
@@ -334,7 +336,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     flushGroup();
                     const section = pendingSection ?? '(unknown)';
                     if (!pendingSection) {
-                        warnings.add('contribution line without a preceding section name', line.trim());
+                        warnings.add('contribution line without a preceding section name', line.trim(), lineNo + 1);
                     }
                     pendingSection = null;
                     group = {
@@ -368,12 +370,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     if (group) {
                         group.symbols.push({ addr: parseInt(symbol[1], 16), name });
                     } else {
-                        warnings.add('symbol line without a preceding contribution', line.trim());
+                        warnings.add('symbol line without a preceding contribution', line.trim(), lineNo + 1);
                     }
                     break;
                 }
 
-                warnings.add('unrecognized line', line.trim());
+                warnings.add('unrecognized line', line.trim(), lineNo + 1);
                 break;
             }
         }
