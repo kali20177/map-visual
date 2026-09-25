@@ -40,6 +40,15 @@ const configs = [
     target: 'es2022',
     ...common,
   },
+  {
+    // Diff viewer webview (M5)
+    entryPoints: ['src/webview/diff.ts'],
+    outfile: 'dist/diff.js',
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2022',
+    ...common,
+  },
 ];
 
 if (watch) {

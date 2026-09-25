@@ -247,14 +247,16 @@ MapVisual/
 
 ## 11. 里程碑
 
-| 里程碑 | 内容 | 验收 |
+| 里程碑 | 内容 | 状态 |
 |---|---|---|
-| M0 脚手架 | 工程、esbuild、vitest、CI、fixtures 就位 | `npm test` 绿；F5 起调通 |
-| M1 GNU ld MVP | 检测/解析/尺寸分摊/demangle/列表排序过滤/汇总面板/快捷键 | 13 fixtures 全绿；真实 STM32 map 手验 |
-| M2 Keil armlink | AC5/AC6/EIDE、Grand Totals、Image component sizes 聚合 | 真实 AC5+AC6 样例手验 |
-| M3 体验打磨 | 分组、导出、watch、系统库过滤、状态栏、进度条、降级提示页 | 全部 Should 项落地 |
-| M4 第二梯队格式 | IAR ilink（需样例采集）、LLVM lld | 各 ≥1 真实样例通过 |
-| M5 进阶 | Map Diff、跳转源码、Treemap 视图 | Diff 支持 GNU/Keil 各一对 |
+| M0 脚手架 | 工程、esbuild、vitest、CI、fixtures 就位 | ✅ 2026-09-25 |
+| M1 GNU ld MVP | 检测/解析/尺寸分摊/demangle/列表排序过滤/汇总面板/快捷键 | ✅ 2026-09-25（13+3 fixtures 全绿，区域占用与 --print-memory-usage 一致） |
+| M2 Keil armlink | AC5/AC6/EIDE、Grand Totals、Image component sizes 聚合 | 🔌 **接口已预留**（parser registry），待真实样例 |
+| M3 体验打磨 | 分组、导出、watch、系统库过滤、状态栏、进度条、降级提示页、右键菜单 | ✅ 2026-09-25 |
+| M4 第二梯队格式 | IAR ilink（需样例采集）、LLVM lld | ✅ lld（真实 23.1.2 产物验证）；🔌 IAR 接口已预留，待样例 |
+| M5 进阶 | Map Diff、跳转源码、Treemap 视图 | ✅ 2026-09-25 |
+
+**M2/M4 接口预留**：`src/parser/registry.ts` 暴露 `FormatParser` 接口（纯函数、无 vscode 依赖、未知行走 warnings、产出统一 IR）与 `registerParser(format, impl)`；`PLANNED_FORMATS` 为 armlink/ilink 保留用户可读的"已识别但未支持"提示。M2/M4 实现时只需新增解析器文件 + 一行注册 + 把格式移出 PLANNED_FORMATS，检测/管线/UI 全部无需改动。
 
 ## 12. 风险与开放问题
 

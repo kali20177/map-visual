@@ -16,12 +16,15 @@ npm test            # vitest，65 项单测（含 17 个真实 map fixture）
 
 ## 功能规划（速览）
 
-- **`Alt+M` 秒开**：QuickPick 选择或双击 `.map` 直接进入可视化视图，重建后自动刷新
-- **符号级列表**：Size / Symbol / Kind / Section / Object / Address 任意排序，虚拟滚动
+- **`Alt+M` 秒开**：QuickPick 选择或双击 `.map` 直接进入可视化视图，重建后自动刷新；**`Alt+Shift+D` 对比两份 map**
+- **符号级列表**：Size / Symbol / Kind / Section / Object / Address 任意排序，虚拟滚动；右键菜单支持复制 mangled / demangled / 整行、按对象过滤、跳转源码
+- **Treemap 视图**：列表 ⇄ 面积图一键切换，按分组着色、可钻取
+- **Map Diff**：选两份 map 按符号对比增减（added / removed / changed），Flash/RAM 总量差值汇总，可导出 CSV
 - **C++ 还原**：内置 WASM demangler（gecko-profiler-demangle，零配置），段名内嵌符号（`.text._ZN...`）一并还原，mangled 与 demangled 双向可搜索
 - **编译选项自动化**：`-ffunction-sections` 两行式条目、LTO、`--gc-sections` 裁剪桶、`*fill*` 填充、静态库成员、relax 注释行、`.data` 的 Flash/RAM 双计入
-- **多工具链**：GNU ld ✅ / LLVM lld ✅ / Keil armlink（M2）/ IAR ilink（M4）
-- **汇总面板**：区域占用条（Memory Configuration）、分类占比、Top 符号、填充浪费统计；CSV 导出
+- **多工具链**：GNU ld ✅ / LLVM lld ✅（真实产物验证）/ Keil armlink（接口预留，M2）/ IAR ilink（接口预留，M4）
+- **汇总面板 + 状态栏**：区域占用条、分类占比、Top 符号；VSCode 状态栏速览当前 map 的 Flash/RAM
+- **解析进度**：状态栏进度提示（读取 → 检测 → 解析 → demangle → 分析）
 
 ## 质量门禁
 

@@ -680,6 +680,207 @@ body {
     color: var(--vscode-descriptionForeground);
 }
 
+/* ---------- context menu (M3) ---------- */
+
+.mv-context-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: 240px;
+    padding: 4px;
+    background: var(--vscode-editorWidget-background, #252526);
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    font-size: 12px;
+}
+
+.mv-cm-item {
+    padding: 5px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 420px;
+}
+
+.mv-cm-item:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+/* ---------- treemap (M5) ---------- */
+
+.mv-tm-node {
+    position: absolute;
+    overflow: hidden;
+    border: 1px solid var(--vscode-editor-background);
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0.92;
+}
+
+.mv-tm-node:hover {
+    opacity: 1;
+    filter: brightness(1.12);
+    z-index: 1;
+}
+
+.mv-tm-node.more {
+    background: var(--mv-pad);
+    cursor: default;
+}
+
+.mv-tm-node.k-code {
+    background: var(--mv-code);
+}
+
+.mv-tm-node.k-rodata {
+    background: var(--mv-rodata);
+}
+
+.mv-tm-node.k-data {
+    background: var(--mv-data);
+}
+
+.mv-tm-node.k-bss {
+    background: var(--mv-bss);
+}
+
+.mv-tm-node.k-pad {
+    background: var(--mv-pad);
+}
+
+.mv-tm-node.k-other {
+    background: var(--mv-other);
+}
+
+.mv-tm-node.k-meta {
+    background: var(--mv-meta);
+}
+
+.mv-tm-label {
+    display: block;
+    padding: 2px 5px;
+    font-size: 11px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.mv-tm-label em {
+    font-style: normal;
+    opacity: 0.85;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 10px;
+}
+
+.mv-tm-crumb {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    top: 4px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    z-index: 2;
+}
+
+.mv-crumb-link {
+    color: var(--vscode-textLink-foreground, #3794ff);
+    cursor: pointer;
+}
+
+.mv-crumb-link:hover {
+    text-decoration: underline;
+}
+
+.mv-crumb-sep {
+    color: var(--vscode-descriptionForeground);
+}
+
+/* ---------- diff view (M5) ---------- */
+
+.mv-diff-summary {
+    display: flex;
+    gap: 20px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+    background: var(--vscode-sideBar-background);
+    font-size: 12px;
+    flex-wrap: wrap;
+}
+
+.mv-dlabel {
+    color: var(--vscode-descriptionForeground);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+
+.mv-delta {
+    font-family: var(--vscode-editor-font-family);
+    font-variant-numeric: tabular-nums;
+}
+
+.mv-delta.up,
+.mv-delta-cell.up {
+    color: var(--mv-bss);
+}
+
+.mv-delta.down,
+.mv-delta-cell.down {
+    color: var(--mv-rodata);
+}
+
+.mv-delta-cell {
+    text-align: right;
+    font-weight: 600;
+}
+
+.mv-thead.mv-diff-head {
+    grid-template-columns: 92px 92px 92px minmax(220px, 1.6fr) 76px minmax(150px, 1fr);
+}
+
+.mv-row.mv-datarow[class*='diff-'] {
+    grid-template-columns: 92px 92px 92px minmax(220px, 1.6fr) 76px minmax(150px, 1fr);
+}
+
+.mv-row.diff-added {
+    background: color-mix(in srgb, var(--mv-rodata) 10%, transparent);
+}
+
+.mv-row.diff-removed {
+    background: color-mix(in srgb, var(--mv-bss) 10%, transparent);
+}
+
+.mv-statuschip {
+    display: inline-block;
+    padding: 0 6px;
+    margin-left: 6px;
+    border-radius: 8px;
+    font-size: 9px;
+    line-height: 14px;
+    flex: none;
+    color: #fff;
+    background: var(--mv-pad);
+}
+
+.mv-statuschip.s-added {
+    background: var(--mv-rodata);
+}
+
+.mv-statuschip.s-removed {
+    background: var(--mv-bss);
+}
+
+.mv-statuschip.s-changed {
+    background: var(--mv-data);
+}
+
 /* ---------- error page ---------- */
 
 .mv-error {

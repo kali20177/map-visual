@@ -31,6 +31,17 @@
         "category": "MapVisual"
       },
       {
+        "command": "mapvisual.diff",
+        "title": "MapVisual: Compare Two Maps",
+        "category": "MapVisual"
+      },
+      {
+        "command": "mapvisual.reveal",
+        "title": "MapVisual: Reveal Map View",
+        "category": "MapVisual",
+        "when": "false"
+      },
+      {
         "command": "mapvisual.openAsText",
         "title": "MapVisual: Open as Text",
         "category": "MapVisual"
@@ -41,6 +52,11 @@
         "command": "mapvisual.open",
         "key": "alt+m",
         "mac": "alt+m"
+      },
+      {
+        "command": "mapvisual.diff",
+        "key": "alt+shift+d",
+        "mac": "alt+shift+d"
       }
     ],
     "customEditors": [
@@ -112,6 +128,5 @@
   },
   "dependencies": {
     "gecko-profiler-demangle": "^0.4.0"
-  },
-  "type": "module"
+  }
 }

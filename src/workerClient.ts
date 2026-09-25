@@ -2,15 +2,30 @@ import * as path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import * as vscode from 'vscode';
 import type { MapDocument } from './types';
-import type { ParseRequest, ParseResponse } from './protocol';
+import type { DiffResult } from './types';
+import type { HostToWorker, WorkerToHost } from './protocol';
+
+export type ProgressReporter = (stage: string, pct: number) => void;
+
+interface PendingJob {
+    resolve: (value: MapDocument | DiffResult) => void;
+    reject: (err: Error) => void;
+    onProgress?: ProgressReporter;
+}
+
+export class WorkerError extends Error {
+    constructor(public readonly kind: string, message: string) {
+        super(message);
+    }
+}
 
 /**
- * Long-lived parse worker. Requests are serialized: each parse is
+ * Long-lived parse/diff worker. Requests are serialized: each job is
  * self-contained, so a single worker keeps memory flat and ordering sane.
  */
 export class ParseWorkerClient implements vscode.Disposable {
     private worker: Worker | null = null;
-    private pending: { resolve: (doc: MapDocument) => void; reject: (err: Error) => void } | null = null;
+    private pending: PendingJob | null = null;
     private queue: Promise<unknown> = Promise.resolve();
 
     constructor(private readonly extensionPath: string) {}
@@ -18,14 +33,18 @@ export class ParseWorkerClient implements vscode.Disposable {
     private ensure(): Worker {
         if (!this.worker) {
             this.worker = new Worker(path.join(this.extensionPath, 'dist', 'worker.js'));
-            this.worker.on('message', (msg: ParseResponse) => {
+            this.worker.on('message', (msg: WorkerToHost) => {
                 const job = this.pending;
-                this.pending = null;
                 if (!job) {
                     return;
                 }
-                if (msg.type === 'result') {
-                    job.resolve(msg.doc);
+                if (msg.type === 'progress') {
+                    job.onProgress?.(msg.stage, msg.pct);
+                    return;
+                }
+                this.pending = null;
+                if (msg.type === 'result' || msg.type === 'diffResult') {
+                    job.resolve(msg.type === 'result' ? msg.doc : msg.diff);
                 } else {
                     job.reject(new WorkerError(msg.error.kind, msg.error.message));
                 }
@@ -47,12 +66,12 @@ export class ParseWorkerClient implements vscode.Disposable {
         return this.worker;
     }
 
-    parse(req: ParseRequest): Promise<MapDocument> {
+    private run<T>(request: HostToWorker, onProgress?: ProgressReporter): Promise<T> {
         const job = this.queue.then(
             () =>
-                new Promise<MapDocument>((resolve, reject) => {
-                    this.pending = { resolve, reject };
-                    this.ensure().postMessage(req);
+                new Promise<T>((resolve, reject) => {
+                    this.pending = { resolve: resolve as (v: MapDocument | DiffResult) => void, reject, onProgress };
+                    this.ensure().postMessage(request);
                 }),
         );
         // keep the chain alive after a rejection
@@ -60,14 +79,16 @@ export class ParseWorkerClient implements vscode.Disposable {
         return job;
     }
 
+    parse(req: Extract<HostToWorker, { type: 'parse' }>, onProgress?: ProgressReporter): Promise<MapDocument> {
+        return this.run<MapDocument>(req, onProgress);
+    }
+
+    diff(req: Extract<HostToWorker, { type: 'diff' }>, onProgress?: ProgressReporter): Promise<DiffResult> {
+        return this.run<DiffResult>(req, onProgress);
+    }
+
     dispose(): void {
         void this.worker?.terminate();
         this.worker = null;
-    }
-}
-
-export class WorkerError extends Error {
-    constructor(public readonly kind: string, message: string) {
-        super(message);
     }
 }

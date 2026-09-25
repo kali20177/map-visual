@@ -2,16 +2,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { MapDocument } from '../types';
 import { detectFormat } from './detect';
-import { parseGnuLd } from './gnuld';
-import { parseLld } from './lld';
 import { Warnings } from './warnings';
 import { Demangler, demanglerAvailable, initDemangler, isMangled } from '../demangle';
 import { finalize } from '../analysis/analyze';
+import { getParser, PLANNED_FORMATS } from './registry';
 
 export interface ParseOptions {
     demangle: boolean;
     formatOverride: 'auto' | 'gnu-ld' | 'lld';
 }
+
+export type ProgressFn = (stage: string, pct: number) => void;
 
 export class MapParseError extends Error {
     constructor(
@@ -32,6 +33,7 @@ export async function parseMapFile(
     filePath: string,
     opts: ParseOptions,
     wasmDir?: string,
+    onProgress?: ProgressFn,
 ): Promise<MapDocument> {
     let text: string;
     try {
@@ -46,7 +48,7 @@ export async function parseMapFile(
     if (text.trim().length === 0) {
         throw new MapParseError('unknown', 'file is empty');
     }
-    return parseMapText(text, filePath, opts, wasmDir);
+    return parseMapText(text, filePath, opts, wasmDir, onProgress);
 }
 
 export async function parseMapText(
@@ -54,29 +56,37 @@ export async function parseMapText(
     file: string,
     opts: ParseOptions,
     wasmDir?: string,
+    onProgress?: ProgressFn,
 ): Promise<MapDocument> {
+    const progress = onProgress ?? (() => undefined);
     const detection = detectFormat(text);
+    progress('detecting format', 15);
 
     if (detection.jsonSourcemap) {
         throw new MapParseError('json', 'This looks like a JSON file (probably a JS sourcemap), not a linker map.');
     }
-    if (detection.format === 'armlink' || detection.format === 'ilink') {
-        throw new MapParseError('unsupported', `Keil/IAR map support is on the roadmap; detected: ${detection.format} (${detection.reason})`);
-    }
     let format = detection.format;
     if (opts.formatOverride === 'gnu-ld' || opts.formatOverride === 'lld') {
         format = opts.formatOverride;
-    }
-    if (format !== 'gnu-ld' && format !== 'lld') {
-        throw new MapParseError('unknown', `Could not identify the map format (${detection.reason}). Try setting "mapvisual.formatOverride".`);
     }
 
     if (opts.demangle && wasmDir) {
         await initDemangler(path.join(wasmDir, 'index_bg.wasm'));
     }
 
+    const parser = getParser(format);
+    if (!parser) {
+        const planned = PLANNED_FORMATS.get(format);
+        if (planned) {
+            throw new MapParseError('unsupported', planned);
+        }
+        throw new MapParseError('unknown', `Could not identify the map format (${detection.reason}). Try setting "mapvisual.formatOverride".`);
+    }
+
+    progress('parsing symbols', 35);
     const warnings = new Warnings();
-    const parsed = format === 'lld' ? parseLld(text, warnings) : parseGnuLd(text, warnings);
+    const parsed = parser.parse(text, warnings);
+    progress('demangling', 65);
 
     for (const sym of parsed.symbols) {
         sym.isSystem = SYSTEM_RE.test(sym.object) || (sym.archive != null && SYSTEM_RE.test(sym.archive));
@@ -91,6 +101,7 @@ export async function parseMapText(
     if (opts.demangle && !demanglerAvailable()) {
         warnings.add('demangler unavailable (WASM module failed to load) — mangled names kept as-is');
     }
+    progress('analyzing regions', 85);
 
     const doc: MapDocument = {
         format,
@@ -108,5 +119,7 @@ export async function parseMapText(
         },
         warnings: warnings.list(),
     };
-    return finalize(doc);
+    finalize(doc);
+    progress('done', 100);
+    return doc;
 }

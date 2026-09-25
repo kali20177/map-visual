@@ -1,18 +1,25 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { MapEditorProvider } from './mapEditor';
+import { DiffPanel } from './diffPanel';
 import { ParseWorkerClient } from './workerClient';
 
 export function activate(context: vscode.ExtensionContext): void {
     const worker = new ParseWorkerClient(context.extensionPath);
-    const provider = new MapEditorProvider(context, worker);
+    const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+    statusItem.name = 'MapVisual';
+    statusItem.command = 'mapvisual.reveal';
+    const provider = new MapEditorProvider(context, worker, statusItem);
 
     context.subscriptions.push(
         worker,
+        statusItem,
         vscode.window.registerCustomEditorProvider('mapvisual.editor', provider, {
             supportsMultipleEditorsPerDocument: false,
         }),
         vscode.commands.registerCommand('mapvisual.open', () => void openMapFile()),
+        vscode.commands.registerCommand('mapvisual.diff', () => void diffMaps(worker, context)),
+        vscode.commands.registerCommand('mapvisual.reveal', () => provider.revealActivePanel()),
         vscode.commands.registerCommand('mapvisual.openAsText', (uri?: vscode.Uri) =>
             void vscode.commands.executeCommand('vscode.openWith', uri ?? currentMapUri(), 'default', vscode.ViewColumn.Active),
         ),
@@ -41,14 +48,60 @@ async function openMapFile(): Promise<void> {
         await openInViewer(maps[0]);
         return;
     }
-    const items = maps.map((uri) => ({ uri, label: workspaceRelative(uri) }));
-    const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: 'Select a linker map file',
-        matchOnDescription: true,
-    });
+    const picked = await pickMap('Select a linker map file', maps);
     if (picked) {
-        await openInViewer(picked.uri);
+        await openInViewer(picked);
     }
+}
+
+async function diffMaps(worker: ParseWorkerClient, context: vscode.ExtensionContext): Promise<void> {
+    const maps = await findWorkspaceMaps();
+    if (maps.length < 2) {
+        void vscode.window.showInformationMessage('MapVisual: diffing needs at least two .map files in this workspace.');
+        return;
+    }
+    const after = await pickMap('Select the NEW (after) map', maps);
+    if (!after) {
+        return;
+    }
+    const before = await pickMap('Select the OLD (before) map', maps.filter((m) => m.fsPath !== after.fsPath));
+    if (!before) {
+        return;
+    }
+    const cfg = vscode.workspace.getConfiguration('mapvisual');
+    try {
+        const diff = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Window, title: 'MapVisual: diffing maps' },
+            (progress) =>
+                worker.diff(
+                    {
+                        type: 'diff',
+                        pathA: before.fsPath,
+                        pathB: after.fsPath,
+                        demangle: cfg.get<boolean>('demangle', true),
+                        formatOverride: cfg.get<'auto' | 'gnu-ld' | 'lld'>('formatOverride', 'auto'),
+                    },
+                    (stage) => progress.report({ message: stage }),
+                ),
+        );
+        await DiffPanel.create(context, diff);
+    } catch (e) {
+        const err = e as Error & { kind?: string };
+        if (err.kind === 'json') {
+            void vscode.window.showWarningMessage(err.message);
+        } else {
+            void vscode.window.showErrorMessage(`MapVisual: ${err.message}`);
+        }
+    }
+}
+
+async function pickMap(placeHolder: string, maps: vscode.Uri[]): Promise<vscode.Uri | undefined> {
+    if (maps.length === 0) {
+        return undefined;
+    }
+    const items = maps.map((uri) => ({ uri, label: workspaceRelative(uri) }));
+    const picked = await vscode.window.showQuickPick(items, { placeHolder, matchOnDescription: true });
+    return picked?.uri;
 }
 
 async function openInViewer(uri: vscode.Uri): Promise<void> {

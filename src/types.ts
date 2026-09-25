@@ -84,3 +84,30 @@ export const EMPTY_KIND_TOTALS = (): Record<SymbolKind, number> => ({
     pad: 0,
     other: 0,
 });
+
+// ── Map Diff (M5) ──
+// Shared diff contract: computed in the worker (analysis/diff.ts), consumed
+// by host + diff webview. Kept here so the type import never crosses layer
+// boundaries (dependency-cruiser: webview-allowlist / host-must-use-worker).
+
+export type DiffStatus = 'added' | 'removed' | 'changed' | 'same';
+
+export interface DiffRow {
+    key: string;
+    name: string;
+    kind: SymbolKind;
+    status: DiffStatus;
+    sizeA: number;
+    sizeB: number;
+    delta: number;
+    objectA: string | null;
+    objectB: string | null;
+}
+
+export interface DiffResult {
+    fileA: string;
+    fileB: string;
+    rows: DiffRow[];
+    totalsA: MapTotals;
+    totalsB: MapTotals;
+}

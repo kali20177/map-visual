@@ -3,14 +3,17 @@ import type { HostToWebview, WebviewToHost } from '../protocol';
 import {
     DEFAULT_UI_STATE,
     buildView,
+    filterAndSort,
     flattenItems,
     formatAddr,
     formatBytes,
+    groupKeyOf,
     toCsv,
     type GroupView,
     type ListItem,
     type UiState,
 } from './model';
+import { buildGroups, squarify } from './treemap';
 
 declare function acquireVsCodeApi(): { postMessage(msg: WebviewToHost): void };
 
@@ -25,9 +28,18 @@ interface AppState {
     ui: UiState;
     collapsed: Set<string>;
     error: { kind: string; message: string } | null;
+    view: 'list' | 'treemap';
+    treemapGroupKey: string | null;
 }
 
-const state: AppState = { doc: null, ui: { ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } }, collapsed: new Set(), error: null };
+const state: AppState = {
+    doc: null,
+    ui: { ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } },
+    collapsed: new Set(),
+    error: null,
+    view: 'list',
+    treemapGroupKey: null,
+};
 
 // ---- DOM handles ----
 const root = document.getElementById('app')!;
@@ -53,6 +65,7 @@ root.innerHTML = `
     <button id="mv-demangle" class="mv-toggle" title="Toggle C++ demangling">C++</button>
     <button id="mv-system" class="mv-toggle" title="Hide compiler/runtime objects (crt, libgcc, libc…)">System</button>
     <button id="mv-discarded" class="mv-toggle" title="Show sections removed by --gc-sections">Removed</button>
+    <button id="mv-view" class="mv-toggle" title="Toggle list / treemap view">Treemap</button>
     <button id="mv-export" class="mv-btn" title="Export the filtered rows as CSV">CSV</button>
   </div>
   <div class="mv-body">
@@ -75,6 +88,7 @@ const minSizeEl = $<HTMLSelectElement>('mv-minsize');
 const demangleEl = $('mv-demangle');
 const systemEl = $('mv-system');
 const discardedEl = $('mv-discarded');
+const viewEl = $('mv-view');
 const exportEl = $('mv-export');
 const summaryEl = $('mv-summary');
 const theadEl = $('mv-thead');
@@ -205,6 +219,7 @@ function renderRows(): void {
     if (!doc) {
         return;
     }
+    theadEl.style.display = '';
     const items: ListItem[] = buildView(doc, state.ui);
     visible = flattenItems(items, state.collapsed);
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
@@ -271,9 +286,94 @@ function renderFooter(): void {
 function renderAll(): void {
     renderHeader();
     renderSummary();
-    renderRows();
+    if (state.view === 'treemap') {
+        renderTreemap();
+    } else {
+        renderRows();
+    }
     renderFooter();
 }
+
+// ---- treemap view (M5) ----
+
+function renderTreemap(): void {
+    const doc = state.doc;
+    if (!doc) {
+        return;
+    }
+    theadEl.style.display = 'none';
+    const rows = filterAndSort(doc, state.ui).map((r) => r.sym);
+    const groups = buildGroups(rows, (s) =>
+        state.ui.groupBy === 'none' ? groupKeyOf(s, 'object') : groupKeyOf(s, state.ui.groupBy),
+    );
+    const rect = { x: 8, y: 8, w: tbodyEl.clientWidth - 16, h: tbodyEl.clientHeight - 16 };
+    let html = '';
+
+    if (state.treemapGroupKey) {
+        const group = groups.find((g) => g.key === state.treemapGroupKey);
+        if (!group) {
+            state.treemapGroupKey = null;
+            renderTreemap();
+            return;
+        }
+        html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1">‹ all groups</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${group.items.length} symbols · ${formatBytes(group.size)}</span></div>`;
+        const capped = capItems(group.items);
+        const rects = squarify(capped.items, { x: rect.x, y: rect.y + 28, w: rect.w, h: rect.h - 28 });
+        html += rects.map((r) => tmNodeHtml(r, r.key, r.label)).join('');
+    } else {
+        const items = groups.map((g) => ({ key: g.key, label: g.label, size: g.size, kind: g.kind }));
+        const rects = squarify(items, rect);
+        html += rects.map((r) => tmNodeHtml(r, r.key, `${r.label} — ${formatBytes(r.size)}`)).join('');
+    }
+    rowsEl.innerHTML = html;
+    spacerEl.style.height = `${tbodyEl.clientHeight}px`;
+}
+
+function capItems(items: Array<{ key: string; label: string; size: number; kind: SymbolKind }>): { items: Array<{ key: string; label: string; size: number; kind: SymbolKind }>; merged: number } {
+    const MAX = 250;
+    if (items.length <= MAX) {
+        return { items, merged: 0 };
+    }
+    const keep = items.slice().sort((a, b) => b.size - a.size).slice(0, MAX);
+    const restSize = items.reduce((a, b) => a + b.size, 0) - keep.reduce((a, b) => a + b.size, 0);
+    keep.push({ key: '__more__', label: `+${items.length - MAX} smaller`, size: restSize, kind: 'meta' });
+    return { items: keep, merged: items.length - MAX };
+}
+
+function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolKind; x: number; y: number; w: number; h: number }, dataKey: string, title: string): string {
+    const showLabel = r.w > 56 && r.h > 20;
+    const short = showLabel && r.w > 120 ? r.label : r.label.length > 14 ? r.label.slice(0, 13) + '…' : r.label;
+    const isMore = r.key === '__more__';
+    return `
+    <div class="mv-tm-node k-${r.kind}${isMore ? ' more' : ''}" data-tm-key="${escapeAttr(dataKey)}" data-tm-group="${r.kind === 'meta' && isMore ? '0' : '1'}"
+         style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px" title="${escapeAttr(title)}">
+      ${showLabel ? `<span class="mv-tm-label">${escapeHtml(short)}${showLabel && r.w > 150 ? ` <em>${formatBytes(r.size)}</em>` : ''}</span>` : ''}
+    </div>`;
+}
+
+    tbodyEl.addEventListener('click', (ev) => {
+    const tmNode = (ev.target as HTMLElement).closest('[data-tm-key]') as HTMLElement | null;
+    if (tmNode && state.view === 'treemap') {
+        const key = tmNode.dataset.tmKey!;
+        if (key === '__more__') {
+            return; // "+N smaller" cells are not drillable
+        }
+        if (state.treemapGroupKey) {
+            // leaf: copy the symbol name
+            const label = (tmNode.querySelector('.mv-tm-label')?.textContent ?? key).trim();
+            void navigator.clipboard?.writeText(label).then(() => toast(`Copied: ${label.length > 60 ? label.slice(0, 57) + '…' : label}`));
+        } else {
+            state.treemapGroupKey = key;
+            renderTreemap();
+        }
+        return;
+    }
+    const crumb = (ev.target as HTMLElement).closest('[data-tm-back]') as HTMLElement | null;
+    if (crumb) {
+        state.treemapGroupKey = null;
+        renderTreemap();
+    }
+});
 
 function showError(err: { kind: string; message: string }): void {
     state.error = err;
@@ -315,6 +415,12 @@ systemEl.addEventListener('click', () => {
 discardedEl.addEventListener('click', () => {
     state.ui.showDiscarded = !state.ui.showDiscarded;
     syncToggles();
+    renderAll();
+});
+viewEl.addEventListener('click', () => {
+    state.view = state.view === 'list' ? 'treemap' : 'list';
+    state.treemapGroupKey = null;
+    viewEl.classList.toggle('on', state.view === 'treemap');
     renderAll();
 });
 exportEl.addEventListener('click', () => {
@@ -371,6 +477,82 @@ tbodyEl.addEventListener('click', (ev) => {
     const alt = ev.altKey;
     const text = alt ? (sym.mangled ?? sym.name) : entry.row.display;
     void navigator.clipboard?.writeText(text).then(() => toast(`Copied: ${text.length > 60 ? text.slice(0, 57) + '…' : text}`));
+});
+
+// ---- row context menu (M3) ----
+
+let menuEl: HTMLElement | null = null;
+
+function closeMenu(): void {
+    menuEl?.remove();
+    menuEl = null;
+}
+
+function openMenu(x: number, y: number, items: Array<{ label: string; action: () => void }>): void {
+    closeMenu();
+    menuEl = document.createElement('div');
+    menuEl.className = 'mv-context-menu';
+    menuEl.innerHTML = items.map((it, i) => `<div class="mv-cm-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join('');
+    document.body.appendChild(menuEl);
+    const rect = menuEl.getBoundingClientRect();
+    menuEl.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+    menuEl.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+    menuEl.addEventListener('click', (ev) => {
+        const item = (ev.target as HTMLElement).closest('[data-i]') as HTMLElement | null;
+        if (item) {
+            closeMenu();
+            items[parseInt(item.dataset.i!, 10)].action();
+        }
+    });
+}
+
+function copyText(t: string): void {
+    void navigator.clipboard?.writeText(t).then(() => toast(`Copied: ${t.length > 60 ? t.slice(0, 57) + '…' : t}`));
+}
+
+function truncateLabel(s: string | null): string {
+    if (!s) {
+        return '';
+    }
+    return s.length > 34 ? s.slice(0, 31) + '…' : s;
+}
+
+tbodyEl.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    if (state.view !== 'list') {
+        return;
+    }
+    const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
+    if (!rowEl) {
+        return;
+    }
+    const entry = visible[parseInt(rowEl.dataset.i!, 10)];
+    if (!entry?.row) {
+        return;
+    }
+    const sym = entry.row!.sym;
+    const display = entry.row!.display;
+    const objBase = baseDisplay(sym.member ?? sym.object);
+    openMenu(ev.clientX, ev.clientY, [
+        { label: `Copy demangled  ${truncateLabel(display)}`, action: () => copyText(display) },
+        { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
+        { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
+        {
+            label: `Filter by object  ${truncateLabel(objBase)}`,
+            action: () => {
+                searchEl.value = objBase;
+                state.ui.filterText = searchEl.value;
+                scheduleRender();
+            },
+        },
+        { label: 'Go to source', action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) },
+    ]);
+});
+document.addEventListener('click', closeMenu);
+document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+        closeMenu();
+    }
 });
 
 document.addEventListener('keydown', (ev) => {
