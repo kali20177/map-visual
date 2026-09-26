@@ -26,6 +26,18 @@ describe('section classification', () => {
         expect(classifySection('.comment')).toBe('meta');
         expect(classifySection('.ARM.attributes')).toBe('meta');
         expect(classifySection('.init_array')).toBe('other');
+        // Zephyr's dot-less script section names (exact table)
+        expect(classifySection('text')).toBe('code');
+        expect(classifySection('rodata')).toBe('rodata');
+        expect(classifySection('ramfunc')).toBe('code');
+        expect(classifySection('datas')).toBe('data');
+        expect(classifySection('device_states')).toBe('data');
+        expect(classifySection('bss')).toBe('bss');
+        expect(classifySection('noinit')).toBe('bss');
+        expect(classifySection('._user_heap_stack')).toBe('bss');
+        // exact match must not leak into prefix hits
+        expect(classifySection('database')).toBe('other');
+        expect(classifySection('textfile')).toBe('other');
     });
 });
 
@@ -497,6 +509,121 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
         expect(symbols).toHaveLength(320);
         expect(w.list()).toHaveLength(1);
         expect(w.list()[0]!.message).toContain('budget');
+    });
+});
+
+describe('GNU ld — Zephyr dot-less script sections', () => {
+    const ZHEAD = [
+        'Memory Configuration',
+        '',
+        'Name             Origin             Length             Attributes',
+        'FLASH            0x08000000 0x00020000 xr',
+        'RAM              0x20000000 0x00005000 xw',
+        'DEVNULL_ROM      0x08020000 0x00040000 xr',
+        '',
+        'Linker script and memory map',
+        '',
+    ].join('\n');
+
+    it('parses dot-less one-line output section headers', () => {
+        // Zephyr prints `text 0x080000e8 0xfa7c`, `bss 0x20000338 0x1982`, ...
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                ZHEAD,
+                'text            0x08000000      0x20',
+                ' .text          0x08000000      0x10 a.o',
+                '                0x08000000                main',
+                ' *fill*         0x08000010        0x4 ',
+                'bss             0x20000000      0x10',
+                ' .bss.x         0x20000000       0x8 a.o',
+                '                0x20000000                x',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        const main = symbols.find((s) => s.name === 'main');
+        expect(main!.kind).toBe('code');
+        const x = symbols.find((s) => s.name === 'x');
+        expect(x!.kind).toBe('bss');
+        const fill = symbols.find((s) => s.isFill)!;
+        expect(fill.size).toBe(4);
+    });
+
+    it('honors load addresses of initialized two-line dot-less headers, not NOLOAD ones', async () => {
+        // Zephyr `log_msg_ptr_area`: two-line dot-less header whose echoed
+        // load address IS the flash image location; `._user_heap_stack`:
+        // same form, but the echoed load address is script residue.
+        const text = [
+            ZHEAD,
+            'datas            0x20000000        0x8 load address 0x08001000',
+            ' .data.x         0x20000000        0x8 a.o',
+            '                 0x20000000                dv',
+            'log_msg_ptr_area',
+            '                 0x20000008        0x4 load address 0x08001008',
+            ' ._log_msg_ptr.static.ptr_',
+            '                 0x20000008        0x4 a.o',
+            '                 0x20000008                p',
+            '._user_heap_stack',
+            '                 0x2000000c       0x10 load address 0x0800100c',
+            ' *fill*          0x2000000c       0x10 ',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const dv = doc.symbols.find((s) => s.name === 'dv')!;
+        expect(dv.storage).toEqual(['flash', 'ram']);
+        const p = doc.symbols.find((s) => s.name === 'p')!;
+        // other-kind contribution with a load image counts in flash too
+        expect(p.storage).toEqual(['flash', 'ram']);
+        const fill = doc.symbols.find((s) => s.isFill)!;
+        expect(fill.storage).toEqual(['ram']);
+        expect(doc.totals.flash).toBe(12);
+        expect(doc.totals.ram).toBe(28);
+    });
+
+    it('skips linker-script ASSERT lines that echo an address', () => {
+        // Zephyr: `0x00000001 ASSERT ((SIZEOF (initlevel_error) == 0x0), ...)`
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                'initlevel_error',
+                ' *(SORT_BY_NAME(SORT_BY_ALIGNMENT(.z_init_*)))',
+                '                0x00000001                        ASSERT ((SIZEOF (initlevel_error) == 0x0), Undefined initialization levels used.)',
+                'text            0x08000000      0x10',
+                ' .text          0x08000000      0x10 a.o',
+                '                0x08000000                main',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        expect(symbols.filter((s) => s.name.startsWith('ASSERT'))).toEqual([]);
+        expect(symbols.find((s) => s.name === 'main')).toBeDefined();
+    });
+
+    it('keeps Zephyr struct sections (kind other, load image) in flash', async () => {
+        // `._k_heap.static.*` lives in RAM but its load image is in FLASH.
+        const text = [
+            ZHEAD,
+            'text             0x08000000       0x10',
+            ' .text           0x08000000       0x10 a.o',
+            '                 0x08000000                main',
+            'bss              0x20000338       0x10',
+            ' .bss.x          0x20000338        0x8 a.o',
+            '                 0x20000338                x',
+            'k_heap_area       0x200002fc       0x18 load address 0x08012d90',
+            ' ._k_heap.static.heap_',
+            '                 0x200002fc       0x18 a.o',
+            '                 0x200002fc                h',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const h = doc.symbols.find((s) => s.name === 'h')!;
+        expect(h.kind).toBe('other');
+        expect(h.storage).toEqual(['flash', 'ram']);
+        expect(doc.totals.flash).toBe(0x10 + 0x18);
+        expect(doc.totals.ram).toBe(0x8 + 0x18);
     });
 });
 

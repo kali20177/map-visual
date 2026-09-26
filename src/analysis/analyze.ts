@@ -58,9 +58,11 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (sym.kind === 'bss') {
         return ['ram'];
     }
-    // data, and fills inside an initialized (LMA-bearing) section: the bytes
+    // data — and other-kind contributions with a load image (Zephyr's struct
+    // sections print under dot-less script names like `._k_heap.static.*`,
+    // classified other), and fills inside an initialized section: the bytes
     // live in the flash load image and at the runtime address
-    if (sym.kind === 'data' || (sym.isFill && sym.lma != null)) {
+    if (sym.kind === 'data' || (sym.kind === 'other' && sym.lma != null) || (sym.isFill && sym.lma != null)) {
         const set = new Set<Storage>();
         // initializer bytes live in flash (lma), runtime image in ram (vma)
         if (lmaRegion ? lmaRegion.role === 'flash' : true) {

@@ -71,8 +71,34 @@ const PREFIX_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
     ['.noinit', 'bss'],
 ];
 
+/**
+ * Dot-less output section names, matched exactly — Zephyr's generated linker
+ * script prints `text` / `rodata` / `datas` / `bss` / `noinit` / ... without a
+ * leading dot. Exact match (not prefix) so a hypothetical `database` section
+ * stays `other`.
+ */
+const EXACT_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
+    ['text', 'code'],
+    ['ramfunc', 'code'],
+    ['rodata', 'rodata'],
+    ['datas', 'data'],
+    ['data', 'data'],
+    ['sdata', 'data'],
+    ['device_states', 'data'],
+    ['bss', 'bss'],
+    ['sbss', 'bss'],
+    ['noinit', 'bss'],
+    // CubeMX heap/stack NOLOAD section — its echoed load address is not part
+    // of the image, same semantics as `.bss`
+    ['._user_heap_stack', 'bss'],
+];
+
 export function classifySection(rawName: string): SymbolKind {
     const name = rawName.toLowerCase();
+    const exact = EXACT_TABLE.find(([token]) => token === name);
+    if (exact) {
+        return exact[1];
+    }
     if (name === 'common' || name === 'large_common') {
         return 'bss';
     }

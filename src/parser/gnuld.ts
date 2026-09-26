@@ -9,8 +9,11 @@ import type { Warnings } from './warnings';
  * Line grammar and size-allocation algorithm: docs/FORMATS.md §1.
  */
 
+// Section tokens usually start with '.', but scripts name output sections
+// without a dot too — Zephyr's generated linker script prints `text`,
+// `rodata`, `datas`, `bss`, `noinit`, `k_heap_area`, ... at column 0.
 const OUTPUT_SECTION_RE =
-    /^(\.[^\s]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+load address\s+0x([0-9a-fA-F]+))?(?:\s*\(size before (?:relaxing|filtering) 0x[0-9a-fA-F]+\))?(?:\s+[a-zA-Z].*)?\s*$/;
+    /^([A-Za-z_.][^\s]*)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+load address\s+0x([0-9a-fA-F]+))?(?:\s*\(size before (?:relaxing|filtering) 0x[0-9a-fA-F]+\))?(?:\s+[a-zA-Z].*)?\s*$/;
 // Section tokens usually start with '.', but scripts collect plain names too
 // (`*(shellCommand)` for `__attribute__((section("shellCommand")))` data) and
 // COMMON / LARGE_COMMON carry no dot at all.
@@ -437,10 +440,11 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         pendingSection = null;
                         break;
                     }
-                    const bareName = /^(\.[^\s]+)\s*$/.exec(trimmed);
+                    const bareName = /^([A-Za-z_.][^\s]*)\s*$/.exec(trimmed);
                     if (bareName) {
                         // two-line output header: name alone, extent follows on
-                        // the next line as a `load address` continuation
+                        // the next line as a `load address` or bare `vma size`
+                        // continuation
                         closeOutSec();
                         outSec = { name: bareName[1], vma: null, size: null, units: [] };
                         currentSectionHeader = bareName[1];
@@ -518,13 +522,21 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     const obj = continuation[3];
                     if (obj.startsWith('load address')) {
                         // second line of a two-line output header — carries the
-                        // section extent, no contribution of its own. Two-line
-                        // headers are NOLOAD/script sections; their "load
-                        // address" is not part of the flash image, so currentLma
-                        // deliberately stays unset here.
+                        // section extent, no contribution of its own. Zero-init
+                        // script sections (`._user_heap_stack`) echo a load
+                        // address that is not part of the flash image, so it
+                        // stays unset for them; initialized data sections
+                        // (Zephyr's `log_msg_ptr_area`, ...) print the same
+                        // form with a real one.
                         if (outSec && outSec.vma == null) {
                             outSec.vma = parseInt(continuation[1], 16);
                             outSec.size = parseInt(continuation[2], 16);
+                            if (classifySection(currentSectionHeader) !== 'bss') {
+                                const lma = /load address\s+0x([0-9a-fA-F]+)/.exec(obj);
+                                if (lma) {
+                                    currentLma = parseInt(lma[1], 16);
+                                }
+                            }
                         }
                         pendingSection = null;
                         break;
@@ -565,6 +577,10 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     const name = symbol[2];
                     // binutils relax annotations: `0x10 (size before relaxing)` — no address
                     if (name.startsWith('(size before') || name.startsWith('(before ')) {
+                        break;
+                    }
+                    // linker-script assertions echo an address before the expression
+                    if (name.startsWith('ASSERT ') || name.startsWith('ASSERT(')) {
                         break;
                     }
                     // linker-script assignments echo an address before the expression

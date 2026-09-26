@@ -100,6 +100,8 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | `OUTPUT(...)` | 文件结束锚点 | |
 | `LOAD /path` | 跳过 | |
 | 无点自定义段名贡献行（` shellCommand  <vma> <size> <obj>`） | 正常贡献组，kind=other | `__attribute__((section("shellCommand")))` 等脚本 `*(名字)` 收集的自定义段——段名 token 不以 `.` 开头 |
+| **无点输出段头**（col0 `bss 0x… 0x… [load address]`，Zephyr 链接脚本） | 正常输出段头 | Zephyr 的生成脚本给输出段命名不带点（`text`/`rodata`/`datas`/`bss`/`noinit`/`k_heap_area`/…）——段头段名 token 同样放宽为 `[A-Za-z_.]` 开头；kind 由 §1.6 的无点精确表推断。**载像区分**：`datas`/`k_*_area` 等带 `load address` 的两行式无点段头是真实初始化数据（lma 生效）；`._user_heap_stack` 类 bss 语义段的 load address 是脚本残留，忽略（与单行 `.bss` 段头的 zeroInit 规则同构） |
+| `ASSERT (…)`（缩进、带地址前缀） | 跳过 | 链接脚本断言回显（Zephyr `initlevel_error` 段后），与 ` = ` 赋值同类 |
 | 合并/relax 历史快照行 | 剔除 | LTO+字符串合并下 ld 会重打印已合并输入段的 pre-merge 大小（同 VMA、旧尺寸，无占位）——解析器按"输出段内贡献+fill 恰好铺满 [vma, vma+size)"链式取舍，非链上行丢弃 |
 | 两行式输出段头（col0 裸段名 + 次行 extent） | 段级 extent，不产生贡献 | NOLOAD/纯脚本段的两种次行形态：`load address 0x…`（`.tm_clone_table`，size 0）与纯 `0x<vma> 0x<size>` 两字段（`._user_heap_stack` 实际打印形态）；其次行的 load address 不是真实载像，段内 fill 只占 RAM |
 | Memory Configuration 区域降级 | region role → `other`，区域内符号 `storage=[]` | 区域 kept 内容全为非 alloc 语义（kind `other`/`meta`，如 `(COPY)` 段落位的 `DEVNULL_ROM`、仅自定义段的区域）时不计入 flash/ram；**仅含 fill 的区域不降级**（NOLOAD 堆栈 pad 仍占 RAM——fill 的 kind 继承自所在段，不能证明区域的内容属性）。口径注意：位于 FLASH 的可写自定义段（如 `.fw_signature`）无法按内容与 `(COPY)` 段区分，同样不计入——RAM 真值取 ELF 段级（`.data`+`.bss`+`._user_heap_stack` 之和），`size`(1) 工具会把这类段计入 data 列（其 ram 估计虚高 64 B/段） |
@@ -117,6 +119,10 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | bss | `.bss*`、`.tbss`、`.lbss`、`.sbss*`、`.noinit*`、`COMMON` |
 | meta（非分配，默认折叠） | `.debug_*`、`.line`、`.stab*`、`.comment`、`.gnu.build.attributes`、`.jcr`、`.tm_clone_table` |
 | other | `.init_array`/`.fini_array`/`.preinit_array`/`.ctors`/`.dtors`（初始化语义，默认归 code-adjacent）及未识别项 |
+
+**无点段名精确表**（Zephyr 风格，精确匹配非前缀）：`text`→code、`ramfunc`→code、`rodata`→rodata、`datas`/`data`/`sdata`/`device_states`→data、`bss`/`sbss`/`noinit`/`._user_heap_stack`→bss。
+
+**带载像的 other 贡献**：kind=other 但 lma≠null 的行（Zephyr 结构段 `._k_heap.static.*`、`._log_msg_ptr.*` 等打印在 RAM、载像在 FLASH）按 data 口径双计 flash+ram；lma=null 的 other 行仍只按 VMA 区域（DEVNULL_ROM 降级语义不受影响）。
 
 `.ARM.exidx/.ARM.extab` 位于 Flash（LMA），计入 Flash 但 kind 单独标 `unwind`，避免和真实代码混淆 —— 这是 imgui 完全没处理的 ARM 场景。
 
@@ -151,6 +157,7 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | 文件 | 来源 | 覆盖 |
 |---|---|---|
 | stm32f103-rb-demo-boot.map | stm32f103-rb-demo（CMake + Arm GNU Toolchain 13.3）Release/boot，LTO + C++ + 自定义脚本段 | 端到端黄金基准（`test/unit/realmap.test.ts`）：**FLASH 7648 / RAM 6360 与 ELF 段级真值一致**；LTO 合并/relax 快照行、`DEVNULL_ROM`（COPY）区域降级、两行式段头纯 extent 形态、无点 `shellCommand` 贡献行；kept 非 meta 行 VMA 零重叠零空隙 |
+| zephyr-nucleo-f103rb.map | stm32f103-zephyr-demo（Zephyr 4.x + gnuarmemb 13.3）nucleo_f103rb | **无点输出段头**语料（`text`/`rodata`/`datas`/`bss`/`noinit`/`k_*_area`/`log_*_area`，含带 `load address` 的两行式）；端到端黄金基准：**FLASH 77256 / RAM 16054 与 ELF 段级真值一致**；`DEVNULL_ROM` 降级、`ASSERT` 脚本行、`._k_heap.*` 类带载像 other 贡献双计 |
 
 **lld（`test/fixtures/lld/`）：** build.sh 提供 `ld.lld -Map` 生成脚本（armv7m freestanding）；本机 lld 就绪后执行回填，解析器先以官方表格格式合成基准验证。
 

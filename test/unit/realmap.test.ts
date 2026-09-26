@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { parseFixture } from './helpers';
 
 /**
- * End-to-end golden against a real-world map (LTO, C++, script sections).
+ * End-to-end goldens against real-world maps.
+ *
+ * stm32f103-rb-demo-boot: CubeMX-style script sections.
  * Truth: arm-none-eabi-size text 7600 + data 48 = 7648 flash;
  * ELF sections .data + .bss + ._user_heap_stack = 6360 ram.
+ *
+ * zephyr-nucleo-f103rb: Zephyr's generated linker script prints its output
+ * sections WITHOUT a leading dot (`text`, `rodata`, `datas`, `bss`, ...).
+ * Truth: arm-none-eabi-size text 76432 + data 824 = 77256 flash;
+ * ELF ALLOC sections with VMA in RAM sum to 16054 ram.
  */
 describe('real-world map golden (stm32f103-rb-demo Release/boot)', () => {
     it('matches the ELF segment truth exactly', async () => {
@@ -55,5 +62,32 @@ describe('real-world map golden (stm32f103-rb-demo Release/boot)', () => {
         }
         expect(overlap).toBe(0);
         expect(sum).toBe(union);
+    });
+});
+
+describe('real-world map golden (zephyr nucleo_f103rb)', () => {
+    it('matches the ELF segment truth exactly despite dot-less section names', async () => {
+        const doc = await parseFixture('real/zephyr-nucleo-f103rb.map');
+        expect(doc.format).toBe('gnu-ld');
+        expect(doc.warnings).toEqual([]);
+        expect(doc.totals.flash).toBe(77256);
+        expect(doc.totals.ram).toBe(16054);
+    });
+
+    it('downgrades DEVNULL_ROM and keeps bss in ram', async () => {
+        const doc = await parseFixture('real/zephyr-nucleo-f103rb.map');
+        const roles = Object.fromEntries(doc.regions.map((r) => [r.name, r.role]));
+        expect(roles).toEqual({ FLASH: 'flash', RAM: 'ram', DEVNULL_ROM: 'other', SRAM0: 'ram', IDT_LIST: 'other' });
+        // Zephyr parks log strings in DEVNULL_ROM — not part of the image
+        const logRow = doc.symbols.find((s) => s.status === 'kept' && s.section.startsWith('._log_strings.'));
+        expect(logRow).toBeDefined();
+        expect(logRow!.storage).toEqual([]);
+        // `bss` (dot-less header) contributions classify as bss
+        const bssRow = doc.symbols.find((s) => s.status === 'kept' && s.kind === 'bss' && s.section.startsWith('.bss'));
+        expect(bssRow).toBeDefined();
+        // `._k_heap.*` struct data: RAM VMA + FLASH load image
+        const kheap = doc.symbols.find((s) => s.status === 'kept' && s.section.startsWith('._k_heap.'));
+        expect(kheap).toBeDefined();
+        expect(kheap!.storage).toEqual(['flash', 'ram']);
     });
 });
