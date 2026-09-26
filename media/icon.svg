@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="mv-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26334e"/>
+      <stop offset="1" stop-color="#151c2c"/>
+    </linearGradient>
+  </defs>
+  <!-- 底板：深色圆角方（贴近编辑器深底，白/黑背景上都稳） -->
+  <rect x="4" y="4" width="120" height="120" rx="27" fill="url(#mv-bg)"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="26.25" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
+  <!-- treemap：五块配色取自 media/main.css 的语义 kind 色板（暗色主题值），
+       布局模拟真实 map 的比例感——code 占大头，其余按 squarify 意愿排布 -->
+  <g>
+    <rect x="16" y="16" width="52" height="58" rx="4" fill="#6cb6ff"/>
+    <rect x="16" y="79" width="52" height="33" rx="4" fill="#d0aaff"/>
+    <rect x="73" y="16" width="39" height="44" rx="4" fill="#7ed99a"/>
+    <rect x="73" y="65" width="39" height="26" rx="4" fill="#ffb066"/>
+    <rect x="73" y="96" width="39" height="16" rx="4" fill="#ff8080"/>
+  </g>
+  <!-- 图钉：钉在最大的 code 块上——“在这张内存地图上定位符号” -->
+  <path d="M42 61.5 C 33.9 52.4 30.5 47 30.5 41.5 a 11.5 11.5 0 1 1 23 0 C 53.5 47 50.1 52.4 42 61.5 Z" fill="#ffffff"/>
+  <circle cx="42" cy="41.5" r="4.6" fill="#1a2233"/>
+</svg>
