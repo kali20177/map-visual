@@ -616,9 +616,16 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
 
     // Fill entries seen outside any output section become pad rows attributed
     // to their surrounding output section header. `outSection` stays null —
-    // they were not part of a resolved output section (the header name in
-    // `section` may even be stale after a LOAD/OUTPUT boundary).
+    // they were not part of a resolved output section, and the header name in
+    // `section` may even be stale after a LOAD/OUTPUT boundary, so the
+    // attribution is ambiguous enough to warn about.
     for (const fill of looseFills) {
+        warnings.add(
+            fill.section
+                ? `fill outside any output section — attributed to possibly stale header "${fill.section}"`
+                : 'fill outside any output section (no section header seen)',
+            `*fill* 0x${fill.vma.toString(16)}`,
+        );
         emitFill(fill, null);
     }
 

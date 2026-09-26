@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { parseMapFile, MapParseError } from './parser/pipeline';
 import type { ParseOptions } from './parser/pipeline';
 import { diffDocuments } from './analysis/diff';
-import type { DiffRow, MapDocument, MapTotals, SymbolKind, SymbolRecord } from './types';
+import type { DiffRow, MapDocument, MapTotals, ParseWarning, SymbolKind, SymbolRecord } from './types';
 
 /**
  * MapVisual CLI（M6，docs/CLI.md）——AI / 脚本通道。
@@ -342,7 +342,8 @@ function buildTree(doc: MapDocument, by: (typeof TREEMAP_BY)[number], depth: num
             const children = [...l2map.entries()]
                 .map(([k2, leafMap]) => {
                     const leaves = leavesOf(leafMap);
-                    return { name: k2, size: sumOf(leaves), count: leaves.length, children: leaves };
+                    // count 同样取行数求和——Σ children.count == parent.count 才在全层成立
+                    return { name: k2, size: sumOf(leaves), count: leaves.reduce((a, l) => a + l.count, 0), children: leaves };
                 })
                 .sort((a, b) => b.size - a.size);
             return {
@@ -390,6 +391,18 @@ function hexAddr(n: number): string {
     return '0x' + n.toString(16);
 }
 
+/** --md 的 warnings 段（四命令一致；空数组输出空行集，调用方直接 push 展开） */
+function warningsMd(ws: ParseWarning[]): string[] {
+    if (ws.length === 0) {
+        return [];
+    }
+    const lines = ['', '**Warnings**', ''];
+    for (const w of ws) {
+        lines.push(`- ${mdEscape(w.message)}${w.count > 1 ? ` (×${w.count})` : ''}`);
+    }
+    return lines;
+}
+
 function summaryMd(doc: MapDocument): string {
     const t = doc.totals;
     const lines = [
@@ -408,24 +421,20 @@ function summaryMd(doc: MapDocument): string {
     for (const [kind, size] of Object.entries(t.kindTotals)) {
         lines.push(`| ${kind} | ${size} |`);
     }
-    if (doc.warnings.length > 0) {
-        lines.push('', '**Warnings**', '');
-        for (const w of doc.warnings) {
-            lines.push(`- ${w.message}${w.count > 1 ? ` (×${w.count})` : ''}`);
-        }
-    }
+    lines.push(...warningsMd(doc.warnings));
     return lines.join('\n') + '\n';
 }
 
-function symbolsMd(rows: SymbolRecord[]): string {
+function symbolsMd(rows: SymbolRecord[], warnings: ParseWarning[]): string {
     const lines = ['| Size | Name | Kind | Section | Object | Address |', '|---|---|---|---|---|---|'];
     for (const s of rows) {
         lines.push(`| ${s.size} | ${mdEscape(s.demangled ?? s.name)} | ${s.kind} | ${mdEscape(s.section)} | ${mdEscape(s.object)} | ${hexAddr(s.addr)} |`);
     }
+    lines.push(...warningsMd(warnings));
     return lines.join('\n') + '\n';
 }
 
-function treemapMd(tree: TreeNode[]): string {
+function treemapMd(tree: TreeNode[], warnings: ParseWarning[]): string {
     const lines: string[] = [];
     const walk = (nodes: TreeNode[], indent: string): void => {
         for (const n of nodes) {
@@ -436,10 +445,11 @@ function treemapMd(tree: TreeNode[]): string {
         }
     };
     walk(tree, '');
+    lines.push(...warningsMd(warnings));
     return lines.join('\n') + '\n';
 }
 
-function diffMd(rows: DiffRow[], agg: { added: number; removed: number; changed: number; deltaFlash: number; deltaRam: number }): string {
+function diffMd(rows: DiffRow[], agg: { added: number; removed: number; changed: number; deltaFlash: number; deltaRam: number }, warnings: ParseWarning[]): string {
     const lines = [
         `**ΔFlash ${agg.deltaFlash >= 0 ? '+' : ''}${agg.deltaFlash} B · ΔRAM ${agg.deltaRam >= 0 ? '+' : ''}${agg.deltaRam} B** — added ${agg.added}, removed ${agg.removed}, changed ${agg.changed}`,
         '',
@@ -450,6 +460,7 @@ function diffMd(rows: DiffRow[], agg: { added: number; removed: number; changed:
         const delta = r.delta > 0 ? `+${r.delta}` : `${r.delta}`;
         lines.push(`| ${delta} | ${r.status} | ${mdEscape(r.name)} | ${r.sizeA} | ${r.sizeB} | ${mdEscape(r.objectB ?? r.objectA ?? '')} |`);
     }
+    lines.push(...warningsMd(warnings));
     return lines.join('\n') + '\n';
 }
 
@@ -484,7 +495,7 @@ async function runSymbols(pos: string[], v: ArgValues, env: CliEnv, version: str
     };
     const doc = await parseMapFile(file, parseOpts(v), env.wasmDir, progressOf(v, env));
     const rows = filterSymbols(doc, q);
-    return { code: EXIT.ok, out: v.md ? symbolsMd(rows) : toJson(symbolsPayload(doc, version, rows)) };
+    return { code: EXIT.ok, out: v.md ? symbolsMd(rows, doc.warnings) : toJson(symbolsPayload(doc, version, rows)) };
 }
 
 async function runTreemap(pos: string[], v: ArgValues, env: CliEnv, version: string): Promise<CliRunResult> {
@@ -498,7 +509,10 @@ async function runTreemap(pos: string[], v: ArgValues, env: CliEnv, version: str
         throw new UsageError(`--depth must be 1|2|3, got ${depth}`);
     }
     const doc = await parseMapFile(file, parseOpts(v), env.wasmDir, progressOf(v, env));
-    return { code: EXIT.ok, out: v.md ? treemapMd(buildTree(doc, by, depth)) : toJson(treemapPayload(doc, version, by, depth)) };
+    return {
+        code: EXIT.ok,
+        out: v.md ? treemapMd(buildTree(doc, by, depth), doc.warnings) : toJson(treemapPayload(doc, version, by, depth)),
+    };
 }
 
 async function runDiff(pos: string[], v: ArgValues, env: CliEnv, version: string): Promise<CliRunResult> {
@@ -531,8 +545,12 @@ async function runDiff(pos: string[], v: ArgValues, env: CliEnv, version: string
         deltaFlash: diff.totalsB.flash - diff.totalsA.flash,
         deltaRam: diff.totalsB.ram - diff.totalsA.ram,
     };
+    const mergedWarnings: ParseWarning[] = [
+        ...docA.warnings.map((w) => ({ ...w, message: `A: ${w.message}` })),
+        ...docB.warnings.map((w) => ({ ...w, message: `B: ${w.message}` })),
+    ];
     if (v.md) {
-        return { code: EXIT.ok, out: diffMd(rows, agg) };
+        return { code: EXIT.ok, out: diffMd(rows, agg, mergedWarnings) };
     }
     return {
         code: EXIT.ok,
@@ -544,10 +562,7 @@ async function runDiff(pos: string[], v: ArgValues, env: CliEnv, version: string
             rows,
             totalsA: flattenTotals(diff.totalsA),
             totalsB: flattenTotals(diff.totalsB),
-            warnings: [
-                ...docA.warnings.map((w) => ({ ...w, message: `A: ${w.message}` })),
-                ...docB.warnings.map((w) => ({ ...w, message: `B: ${w.message}` })),
-            ],
+            warnings: mergedWarnings,
         }),
     };
 }

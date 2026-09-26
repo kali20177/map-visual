@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cliApp';
 import type { CliRunResult } from '../../src/cliApp';
 import type { SymbolRecord } from '../../src/types';
@@ -41,6 +41,7 @@ interface SymbolsJson {
     count: number;
     totals: TotalsJson;
     symbols: SymbolRecord[];
+    warnings: { message: string }[];
 }
 interface TreeNodeJson {
     name: string;
@@ -89,12 +90,13 @@ function fixtureMaps(): string[] {
         .map((f) => f.replaceAll('\\', '/'));
 }
 
-/** 递归断言分区不变量（Σ 同级 children == 父），返回树总 size */
+/** 递归断言分区不变量（Σ 同级 children 的 size 与 count 都等于父级），返回树总 size */
 function checkTree(nodes: TreeNodeJson[]): number {
     let total = 0;
     for (const n of nodes) {
         if (n.children && n.children.length > 0) {
             expect(checkTree(n.children)).toBe(n.size);
+            expect(n.children.reduce((a, c) => a + c.count, 0), n.name).toBe(n.count);
         }
         total += n.size;
     }
@@ -397,6 +399,75 @@ describe('cli flags — matrix', () => {
         expect(difMd.out).toContain('| Δ |');
         const d = difJ.summary.deltaFlash;
         expect(difMd.out).toContain(`${d >= 0 ? '+' : ''}${d} B`);
+    });
+});
+
+describe('cli loose-fill fallback (REVIEW-1506857 N4 probe)', () => {
+    const HEADER = `Memory Configuration
+
+Name             Origin             Length             Attributes
+FLASH            0x08000000         0x00020000         xr
+RAM              0x20000000         0x00005000         xrw
+
+Linker script and memory map
+
+LOAD main.o
+`;
+    let dir: string;
+    const write = (name: string, body: string): string => {
+        const p = path.join(dir, name);
+        fs.writeFileSync(p, body);
+        return p;
+    };
+    const probeWarnings = (j: { warnings: { message: string }[] }): string[] => j.warnings.map((w) => w.message);
+
+    beforeAll(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mapvisual-n4-'));
+    });
+    afterAll(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('loose fill before any output section falls back to an empty section key and warns', async () => {
+        // 22 份语料没有 loose fill —— 回落分支（outSection ?? section）靠合成探针守卫
+        const map = write('headerless.map', `${HEADER} *fill*         0x08000000       0x8
+.data           0x20000000       0x10
+ *(.data)
+ .data          0x20000000       0x10 main.o
+                0x20000000                counter
+`);
+        const j = jsonOut<SymbolsJson>(await runCli(['symbols', map], ENV));
+        const fill = j.symbols.find((s) => s.isFill)!;
+        expect(fill.outSection).toBeNull();
+        expect(fill.section).toBe('');
+        expect(probeWarnings(j).some((m) => m.includes('outside any output section'))).toBe(true);
+        const t = jsonOut<{ tree: TreeNodeJson[] }>(await runCli(['treemap', map], ENV));
+        expect(t.tree.some((n) => n.name === '' && n.size === 8)).toBe(true);
+    });
+
+    it('loose fill after LOAD falls back to the stale header name and warns', async () => {
+        const map = write('stale.map', `${HEADER}.text           0x08000000       0x24
+ *(.text*)
+ .text          0x08000000       0x20 main.o
+                0x08000000                main
+                0x08000004                helper
+ *fill*         0x08000020       0x4
+LOAD /libc.a
+ *fill*         0x08000024       0x4
+`);
+        const j = jsonOut<SymbolsJson>(await runCli(['symbols', map], ENV));
+        const fills = j.symbols.filter((s) => s.isFill);
+        expect(fills.length).toBe(2);
+        expect(fills[0]!.outSection).toBe('.text'); // 段内 fill：正常路径
+        expect(fills[1]!.outSection).toBeNull(); // LOAD 后的 loose fill：无输出段上下文
+        expect(fills[1]!.section).toBe('.text'); // 回落到过期段名——正是混层可能复发的入口
+        expect(probeWarnings(j).some((m) => m.includes('possibly stale header ".text"'))).toBe(true);
+        // 回落使其并入真实的 .text 节点：0x20 代码 + 0x4 段内 fill + 0x4 stale fill
+        const t = jsonOut<{ tree: TreeNodeJson[] }>(await runCli(['treemap', map], ENV));
+        expect(t.tree.find((n) => n.name === '.text')?.size).toBe(0x28);
+        // N3：--md 侧 warnings 与 JSON 一致地出现
+        const md = await runCli(['symbols', map, '--md'], ENV);
+        expect(md.out).toContain('**Warnings**');
     });
 });
 

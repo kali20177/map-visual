@@ -192,8 +192,9 @@ CLI 属于 worker 树的消费者，必须与 worker 同等约束。按 AGENTS.m
 | summary 黄金基准 | rb-demo `flash===7648 && ram===6360`；zephyr `77256/16054`；gnuld-arm `4152/260`（fixture 路径以 `test/fixtures/real/README` 为准） |
 | 全量 fixture | summary 全部不抛错、`format` 识别正确（22 份） |
 | symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；默认折叠 meta、隐藏 discarded；`--no-demangle` 时 `demangled===null`；行携带 `outSection` |
-| treemap 属性 | 全量 fixture：Σ 同级 children size == 父 size == kept 非 meta 总量；`--depth 1/2` 截断正确 |
+| treemap 属性 | 全量 fixture：Σ 同级 children 的 size 与 count 都等于父级，总量 == kept 非 meta 总量；`--depth 1/2` 截断正确 |
 | treemap 输出段回归 | rb-demo 顶层 `.text` > 5 KB（修复前仅 8 B 的 fill 残渣）、zephyr 顶层节点 < 200（修复前 1188）且 `text` 节点 > 60 KB |
+| loose fill 探针 | 合成 map 两场景（无段头 / LOAD 后 stale header）：回落分支的分组落点与告警（22 份语料零命中该分支，见 §10.14） |
 | diff | 4 组代表组合（同目录 + 跨目录）：`deltaFlash === totalsB.flash - totalsA.flash`、计数可从全量行复算、`--top` 截断保序 |
 | `--md` | 四命令均断言表格头与关键数字和 JSON 一致 |
 | flag 矩阵 | `--format` auto/显式匹配/错配补告警、`--object`/`--section` 正则、`--kind` 多值、`--min-size`/`--top 0` 边界、`--sort name/addr`、`--min-delta 0`、`-h/--help`、`--progress` |
@@ -246,7 +247,10 @@ CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 6. **treemap 计入 fill/pad 行**（kept 非 meta 全量，与 realmap 的"kept 非 meta 平铺不变量"一致）——pad 真实占用空间，排除会让树与 totals 对不上。
 7. **IR 新增 `SymbolRecord.outSection`**（P1 口径决策，采纳审核方向 1）：GNU ld 的 `section` 混合输入段（`.text.foo`）与输出段头两种粒度，treemap `--by section` 原实现因此产出"每输入段一行 + 同名输出段只剩 fill 残渣"的坏视图（rb-demo 顶层 `.text` 仅 8 B、zephyr 顶层 1188 节点）；两个解析器在行生成处补记输出段名（gnuld 取 `outSec.name`，lld 取 `Out` 列），`--by section` 改按输出段分组，无输出段上下文回落 `section`。webview 后续可用它增加输出段分组维度。
 8. **treemap `count` = 原始行数**（同名符号合并后仍累计，pad 行计入），非去重符号名数；`--md` 中显示 `(N rows)`。
-9. **warnings 四命令统一携带**（treemap 原本不带；diff 为 `A:`/`B:` 前缀合并）。
+9. **warnings 四命令统一携带**（treemap 原本不带；diff 为 `A:`/`B:` 前缀合并）；`--md` 侧四命令同样输出 **Warnings** 段（复核轮 N3 补齐）。
 10. **强制 `--format` 解析出 0 行时补告警**（pipeline 层，webview 同受益）——否则是"0 B 固件 + 零告警"的静默错答。
 11. **dependency-cruiser 改白名单式 `cli-allowlist`**（取代列表式的 cli-no-host/cli-no-webview——列表式曾漏掉 `diffPanel.ts`，lint/coupling 双双放行），`host-must-use-worker` 同步补 diffPanel；两者均经故意违规复测确认触发。
 12. **`mapvisual bogus --version` 返回 0 打印版本**（`--version`/`--help` 在命令校验之前处理）——与 `bogus` → exit 2 不完全一致，登记为已知行为。
+13. **treemap `count` 全层为行数**（复核轮 N1）：首版只把叶子层改为行数，k2 层仍是去重名数（rb-demo `.text` 103 vs 实际 106）；k2 改为对叶子行数求和，`Σ children.count == parent.count` 与 size 不变量一起进全 fixture 属性测试。
+14. **loose fill 回落分支补告警与探针**（复核轮 N4）：22 份语料对该分支零命中（`outSection` 全非 null）；gnuld 对输出段之外的 fill 补告警——有段头名时明示 `possibly stale header`（LOAD/OUTPUT 边界后 `currentSectionHeader` 可能过期，正是混层复发的入口），无段头时提示 `no section header seen`；合成探针两场景进 cli.test.ts。
+15. **cli-allowlist 的 from 改 `^src/cli` 前缀**（复核轮 N4 附注）：文件枚举对 M7 新增 CLI 文件（stdin/MCP server）不设防，前缀式默认覆盖，`to` 侧 pathNot 同步用前缀；经临时文件故意违规复测。

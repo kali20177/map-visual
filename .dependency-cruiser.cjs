@@ -35,11 +35,11 @@ module.exports = {
       name: 'cli-allowlist',
       severity: 'error',
       comment:
-        'CLI 隔离（白名单式，与 webview-allowlist 同构）：cli/cliApp 只准依赖 worker 树核心（parser/analysis/demangle）与 types/protocol 及自身——未来新增任何宿主/浏览器文件默认被拦，无需维护禁用清单（列表式的 cli-no-host 曾漏掉 diffPanel.ts）。',
-      from: { path: '^src/(cli\\.ts|cliApp\\.ts)$' },
+        'CLI 隔离（白名单式，与 webview-allowlist 同构）：src/cli* 运行时文件（cli.ts/cliApp.ts 及未来的 stdin/MCP 入口）只准依赖 worker 树核心（parser/analysis/demangle）与 types/protocol 及自身——新增文件默认被拦。from 用 ^src/cli 前缀而非文件枚举（列表式规则曾漏掉 diffPanel.ts），勿改回枚举。',
+      from: { path: '^src/cli' },
       to: {
         path: '^src/',
-        pathNot: '^src/(cli\\.ts|cliApp\\.ts|types\\.ts|protocol\\.ts|parser/|demangle/|analysis/)',
+        pathNot: '^src/(cli|types\\.ts|protocol\\.ts|parser/|demangle/|analysis/)',
       },
     },
     {
