@@ -82,6 +82,25 @@ function expectErr(r: CliRunResult, code: number, kind?: string): void {
 
 const pkgVersion = (JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { version: string }).version;
 
+function fixtureMaps(): string[] {
+    return fs
+        .readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.map'))
+        .map((f) => f.replaceAll('\\', '/'));
+}
+
+/** 递归断言分区不变量（Σ 同级 children == 父），返回树总 size */
+function checkTree(nodes: TreeNodeJson[]): number {
+    let total = 0;
+    for (const n of nodes) {
+        if (n.children && n.children.length > 0) {
+            expect(checkTree(n.children)).toBe(n.size);
+        }
+        total += n.size;
+    }
+    return total;
+}
+
 describe('cli summary — real-world goldens', () => {
     it('rb-demo boot matches the ELF segment truth (7648/6360)', async () => {
         const j = jsonOut<SummaryJson>(await runCli(['summary', RB_DEMO], ENV));
@@ -110,9 +129,7 @@ describe('cli summary — real-world goldens', () => {
     });
 
     it('parses every fixture in the corpus without error', async () => {
-        const maps = fs
-            .readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
-            .filter((f) => f.endsWith('.map'));
+        const maps = fixtureMaps();
         expect(maps.length).toBeGreaterThanOrEqual(22);
         for (const rel of maps) {
             const r = await runCli(['summary', path.join(FIXTURES, rel)], ENV);
@@ -177,6 +194,13 @@ describe('cli symbols — filtering and sorting', () => {
         expect(j.symbols.length).toBeGreaterThan(0);
         expect(j.symbols.every((s) => s.demangled === null)).toBe(true);
     });
+
+    it('carries outSection (output-section granularity) on every row', async () => {
+        const j = jsonOut<SymbolsJson>(await runCli(['symbols', RB_DEMO], ENV));
+        expect(j.symbols.length).toBeGreaterThan(0);
+        expect(j.symbols.every((s) => 'outSection' in s)).toBe(true);
+        expect(j.symbols.some((s) => s.outSection === '.text')).toBe(true);
+    });
 });
 
 describe('cli treemap — partition invariant', () => {
@@ -184,17 +208,7 @@ describe('cli treemap — partition invariant', () => {
         const j = jsonOut<{ tree: TreeNodeJson[] }>(
             await runCli(['treemap', RB_DEMO], ENV),
         );
-        const check = (nodes: TreeNodeJson[]): number => {
-            let total = 0;
-            for (const n of nodes) {
-                if (n.children && n.children.length > 0) {
-                    expect(check(n.children)).toBe(n.size);
-                }
-                total += n.size;
-            }
-            return total;
-        };
-        const treeSum = check(j.tree);
+        const treeSum = checkTree(j.tree);
         const doc = await parseFixture('real/stm32f103-rb-demo-boot.map');
         const expected = doc.symbols
             .filter((s) => s.status === 'kept' && s.kind !== 'meta')
@@ -206,6 +220,40 @@ describe('cli treemap — partition invariant', () => {
                 expect(n.children![i - 1].size).toBeGreaterThanOrEqual(n.children![i].size);
             }
         }
+    });
+
+    it('partition invariant holds for every fixture in the corpus', async () => {
+        for (const rel of fixtureMaps()) {
+            const r = await runCli(['treemap', path.join(FIXTURES, rel)], ENV);
+            const j = JSON.parse(r.out!) as { tree: TreeNodeJson[] };
+            const treeSum = checkTree(j.tree);
+            const doc = await parseFixture(rel);
+            const expected = doc.symbols
+                .filter((s) => s.status === 'kept' && s.kind !== 'meta')
+                .reduce((a, s) => a + s.size, 0);
+            expect(treeSum, rel).toBe(expected);
+        }
+    });
+
+    it('groups --by section by output section, never pad residue (P1 regression)', async () => {
+        // 回归前：rb-demo 顶层 `.text` 只有 8 B 的 fill 残渣（真实内容在 .text.* 输入段键下）
+        const rb = jsonOut<{ tree: TreeNodeJson[] }>(await runCli(['treemap', RB_DEMO, '--depth', '2'], ENV));
+        expect(rb.tree.length).toBeLessThan(50);
+        const rbText = rb.tree.find((n) => n.name === '.text');
+        expect(rbText).toBeDefined();
+        expect(rbText!.size).toBeGreaterThan(5000);
+        const doc = await parseFixture('real/stm32f103-rb-demo-boot.map');
+        const expected = doc.symbols
+            .filter((s) => s.status === 'kept' && s.kind !== 'meta' && (s.outSection ?? s.section) === '.text')
+            .reduce((a, s) => a + s.size, 0);
+        expect(rbText!.size).toBe(expected);
+
+        // 回归前：zephyr 顶层 1188 个节点、`text` 只有 3960 B
+        const zp = jsonOut<{ tree: TreeNodeJson[] }>(await runCli(['treemap', ZEPHYR, '--depth', '1'], ENV));
+        expect(zp.tree.length).toBeLessThan(200);
+        const zpText = zp.tree.find((n) => n.name === 'text');
+        expect(zpText).toBeDefined();
+        expect(zpText!.size).toBeGreaterThan(60000);
     });
 
     it('respects --depth and --by', async () => {
@@ -257,6 +305,98 @@ describe('cli diff', () => {
     it('prefixes per-side warnings', async () => {
         const j = jsonOut<DiffJson>(await runCli(['diff', GC_MAP, GC_MAP], ENV));
         expect(j.warnings.every((w) => w.message.startsWith('A: ') || w.message.startsWith('B: '))).toBe(true);
+    });
+});
+
+describe('cli flags — matrix', () => {
+    it('--format happy paths (auto / explicit match)', async () => {
+        const j1 = jsonOut<SummaryJson>(await runCli(['summary', fx('lld/firmware_lld.map'), '--format', 'lld'], ENV));
+        expect(j1.format).toBe('lld');
+        const j2 = jsonOut<SummaryJson>(await runCli(['summary', GC_MAP, '--format', 'gnu-ld'], ENV));
+        expect(j2.format).toBe('gnu-ld');
+        const j3 = jsonOut<SummaryJson>(await runCli(['summary', GC_MAP, '--format', 'auto'], ENV));
+        expect(j3.format).toBe('gnu-ld');
+    });
+
+    it('--format mismatch warns instead of silently reporting a 0 B firmware', async () => {
+        const j = jsonOut<SummaryJson>(await runCli(['summary', fx('lld/firmware_lld.map'), '--format', 'gnu-ld'], ENV));
+        expect(j.totals.flash).toBe(0);
+        expect(j.warnings.some((w) => String((w as { message: string }).message).includes('format override'))).toBe(true);
+    });
+
+    it('--object / --section regexes, --kind multi, --min-size, --top 0', async () => {
+        const obj = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--object', 'libgcc'], ENV));
+        expect(obj.count).toBeGreaterThan(0);
+        expect(obj.symbols.every((s) => s.object.includes('libgcc'))).toBe(true);
+
+        const sec = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--section', '\\.text\\.'], ENV));
+        expect(sec.count).toBeGreaterThan(0);
+        expect(sec.symbols.every((s) => s.section.includes('.text.'))).toBe(true);
+
+        const multi = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--kind', 'code', '--kind', 'rodata'], ENV));
+        expect(multi.count).toBeGreaterThan(0);
+        expect(multi.symbols.every((s) => s.kind === 'code' || s.kind === 'rodata')).toBe(true);
+
+        const min0 = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--min-size', '0'], ENV));
+        expect(min0.count).toBeGreaterThan(0);
+        const big = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--min-size', '100000'], ENV));
+        expect(big.count).toBe(0);
+        const top0 = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--top', '0'], ENV));
+        expect(top0.count).toBe(0);
+    });
+
+    it('--sort name / addr orderings', async () => {
+        const byName = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--sort', 'name', '--top', '20'], ENV));
+        const names = byName.symbols.map((s) => (s.demangled ?? s.name).toLowerCase());
+        expect([...names].sort((a, b) => a.localeCompare(b))).toEqual(names);
+        const byAddr = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--sort', 'addr'], ENV));
+        const addrs = byAddr.symbols.map((s) => s.addr);
+        expect([...addrs].sort((a, b) => a - b)).toEqual(addrs);
+    });
+
+    it('--min-delta 0 with --status same accepted on diff', async () => {
+        const r = await runCli(
+            ['diff', fx('gnuld-arm/firmware_basic.map'), GC_MAP, '--min-delta', '0', '--status', 'same'],
+            ENV,
+        );
+        expect(r.code).toBe(0);
+    });
+
+    it('-h / --help print usage', async () => {
+        const h = await runCli(['-h'], ENV);
+        expect(h.code).toBe(0);
+        expect(h.out).toContain('Usage:');
+        expect((await runCli(['--help'], ENV)).code).toBe(0);
+    });
+
+    it('--progress routes parse stages through env.onProgress', async () => {
+        const stages: string[] = [];
+        const r = await runCli(['summary', GC_MAP, '--progress'], {
+            wasmDir: WASM_DIR,
+            onProgress: (stage) => stages.push(stage),
+        });
+        expect(r.code).toBe(0);
+        expect(stages.length).toBeGreaterThan(0);
+        expect(stages).toContain('done');
+    });
+
+    it('--md for symbols / treemap / diff matches the JSON numbers', async () => {
+        const symJ = jsonOut<SymbolsJson>(await runCli(['symbols', GC_MAP, '--top', '3'], ENV));
+        const symMd = await runCli(['symbols', GC_MAP, '--top', '3', '--md'], ENV);
+        expect(symMd.out).toContain('| Size |');
+        expect(symMd.out).toContain(symJ.symbols[0]!.name);
+        expect(symMd.out).toContain(String(symJ.symbols[0]!.size));
+
+        const treJ = jsonOut<{ tree: TreeNodeJson[] }>(await runCli(['treemap', RB_DEMO, '--depth', '2'], ENV));
+        const treMd = await runCli(['treemap', RB_DEMO, '--depth', '2', '--md'], ENV);
+        expect(treMd.out).toContain(treJ.tree[0]!.name);
+        expect(treMd.out).toContain(`${treJ.tree[0]!.size} B`);
+
+        const difJ = jsonOut<DiffJson>(await runCli(['diff', fx('gnuld-arm/firmware_basic.map'), GC_MAP], ENV));
+        const difMd = await runCli(['diff', fx('gnuld-arm/firmware_basic.map'), GC_MAP, '--md'], ENV);
+        expect(difMd.out).toContain('| Δ |');
+        const d = difJ.summary.deltaFlash;
+        expect(difMd.out).toContain(`${d >= 0 ? '+' : ''}${d} B`);
     });
 });
 

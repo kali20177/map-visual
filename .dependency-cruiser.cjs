@@ -27,25 +27,20 @@ module.exports = {
       name: 'host-must-use-worker',
       severity: 'error',
       comment:
-        '宿主隔离：extension/mapEditor/workerClient 不得直接 import 解析器/分析器，解析必须经 worker（大文件解析不能阻塞扩展宿主）。',
-      from: { path: '^src/(extension\\.ts|mapEditor\\.ts|workerClient\\.ts)' },
+        '宿主隔离：extension/mapEditor/diffPanel/workerClient 不得直接 import 解析器/分析器，解析必须经 worker（大文件解析不能阻塞扩展宿主）。',
+      from: { path: '^src/(extension\\.ts|mapEditor\\.ts|diffPanel\\.ts|workerClient\\.ts)' },
       to: { path: '^src/(parser/|demangle/|analysis/)' },
     },
     {
-      name: 'cli-no-webview',
+      name: 'cli-allowlist',
       severity: 'error',
       comment:
-        'CLI 隔离：cli/cliApp 复用 worker 树核心（parser/analysis/demangle），不得拖入 webview 浏览器代码。',
-      from: { path: '^src/(cli\\.ts|cliApp\\.ts)' },
-      to: { path: '^src/webview/' },
-    },
-    {
-      name: 'cli-no-host',
-      severity: 'error',
-      comment:
-        'CLI 隔离：不得引用扩展宿主——宿主文件 import vscode，会间接把 vscode 拉进 CLI bundle。',
-      from: { path: '^src/(cli\\.ts|cliApp\\.ts)' },
-      to: { path: '^src/(extension\\.ts|mapEditor\\.ts|workerClient\\.ts)' },
+        'CLI 隔离（白名单式，与 webview-allowlist 同构）：cli/cliApp 只准依赖 worker 树核心（parser/analysis/demangle）与 types/protocol 及自身——未来新增任何宿主/浏览器文件默认被拦，无需维护禁用清单（列表式的 cli-no-host 曾漏掉 diffPanel.ts）。',
+      from: { path: '^src/(cli\\.ts|cliApp\\.ts)$' },
+      to: {
+        path: '^src/',
+        pathNot: '^src/(cli\\.ts|cliApp\\.ts|types\\.ts|protocol\\.ts|parser/|demangle/|analysis/)',
+      },
     },
     {
       name: 'no-orphans',

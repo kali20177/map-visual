@@ -23,7 +23,8 @@ export default tseslint.config(
           patterns: [
             {
               group: ['vscode', 'vscode/*'],
-              message: 'worker 运行时禁止依赖 VSCode API——宿主交互只经 protocol.ts 的消息协议（src/workerClient.ts）。',
+              message:
+                '纯 Node 运行时（worker/cli）禁止依赖 VSCode API——vscode 只允许出现在扩展宿主层（extension/mapEditor/diffPanel/workerClient）。',
             },
           ],
         },

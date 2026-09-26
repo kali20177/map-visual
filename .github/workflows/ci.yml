@@ -34,9 +34,11 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      # 打包出的 dist/cli.js 直接喂真实黄金基准，断言 ELF 段级真值
+      # 打包出的 dist/cli.js 直接喂真实黄金基准，断言 ELF 段级真值；
+      # 管道用例在 pipefail 下验证 EPIPE 处理（`| head` 提前关闭必须静默成功）
       - name: CLI smoke
         run: |
+          set -o pipefail
           node dist/cli.js --version
           node dist/cli.js summary test/fixtures/real/stm32f103-rb-demo-boot.map | node -e "
             let s = '';
@@ -45,6 +47,8 @@ jobs:
               if (j.tool !== 'mapvisual' || j.totals.flash !== 7648 || j.totals.ram !== 6360) process.exit(1);
               console.log('CLI smoke ok: flash', j.totals.flash, '/ ram', j.totals.ram);
             });"
+          node dist/cli.js symbols test/fixtures/real/zephyr-nucleo-f103rb.map | head -3 > /dev/null
+          echo "EPIPE pipe ok"
 
       # 仅 main 分支推送时打包 vsix 并上传为构建产物（vsce 从 origin 自动识别 GitHub 仓库）
       - name: Package VSIX

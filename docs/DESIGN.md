@@ -255,7 +255,7 @@ MapVisual/
 | M3 体验打磨 | 分组、导出、watch、系统库过滤、状态栏、进度条、降级提示页、右键菜单 | ✅ 2026-09-25 |
 | M4 第二梯队格式 | IAR ilink（需样例采集）、LLVM lld | ✅ lld（真实 23.1.2 产物验证）；🔌 IAR 接口已预留，待样例 |
 | M5 进阶 | Map Diff、跳转源码、Treemap 视图 | ✅ 2026-09-25 |
-| M6 CLI（AI / 脚本通道） | `mapvisual` 命令行：summary / symbols / treemap / diff 四命令、JSON/--md 输出、退出码对齐错误 kind、npm bin、CI smoke | ✅ 2026-09-26（设计契约见 docs/CLI.md；22 份 fixture 黄金基准经 CLI 断言，134 项测试） |
+| M6 CLI（AI / 脚本通道） | `mapvisual` 命令行：summary / symbols / treemap / diff 四命令、JSON/--md 输出、退出码对齐错误 kind、npm bin、CI smoke | ✅ 2026-09-26（设计契约见 docs/CLI.md；22 份 fixture 经 CLI 全量解析、3 份真实 map 断言 ELF 段级真值；IR 补 `outSection` 输出段名，经审核轮修复 treemap 口径/EPIPE/边界规则漏洞） |
 
 **M2/M4 接口预留**：`src/parser/registry.ts` 暴露 `FormatParser` 接口（纯函数、无 vscode 依赖、未知行走 warnings、产出统一 IR）与 `registerParser(format, impl)`；`PLANNED_FORMATS` 为 armlink/ilink 保留用户可读的"已识别但未支持"提示。M2/M4 实现时只需新增解析器文件 + 一行注册 + 把格式移出 PLANNED_FORMATS，检测/管线/UI 全部无需改动。
 

@@ -29,7 +29,7 @@ export interface CliEnv {
     onProgress?: (stage: string, pct: number) => void;
 }
 
-/** 退出码与 MapParseError.kind 对齐（docs/CLI.md §3）。 */
+/** 退出码与 MapParseError.kind 对齐（docs/CLI.md §3）；satisfies 保证 kind 增项时必须同步此表 */
 const EXIT = {
     ok: 0,
     internal: 1,
@@ -39,7 +39,7 @@ const EXIT = {
     unknown: 5,
     json: 6,
     io: 7,
-} as const;
+} as const satisfies Record<'ok' | 'internal' | 'usage' | MapParseError['kind'], number>;
 
 const KINDS: readonly SymbolKind[] = ['code', 'rodata', 'data', 'bss', 'meta', 'pad', 'other'];
 /** symbols 默认 kinds：折叠 meta（debug/注释非存储），对齐 webview 默认视图（FORMATS §1.6） */
@@ -57,7 +57,7 @@ Usage:
                     [--object RE] [--filter TEXT] [--min-size N]
                     [--sort size|addr|name] [--top N]
   mapvisual treemap <file> [--by section|object|kind] [--depth 1|2|3]
-  mapvisual diff <fileA> <fileB> [--status added|removed|changed]...
+  mapvisual diff <fileA> <fileB> [--status added|removed|changed|same]...
                  [--min-delta N] [--top N]
 
 Global options:
@@ -288,6 +288,7 @@ function symbolsPayload(doc: MapDocument, version: string, rows: SymbolRecord[])
 interface TreeNode {
     name: string;
     size: number;
+    /** 原始行数（同名符号合并、pad 行计入），非去重符号名数 */
     count: number;
     children?: TreeNode[];
 }
@@ -307,26 +308,33 @@ function sumOf(nodes: TreeNode[]): number {
 }
 
 function buildTree(doc: MapDocument, by: (typeof TREEMAP_BY)[number], depth: number): TreeNode[] {
-    // 三层键 k1 → k2 → 叶（同名符号合并）；计入 pad/fill（占空间），折叠 meta，
-    // 对齐 webview 默认视图与 realmap 的"kept 非 meta 平铺不变量"
-    const levels = new Map<string, Map<string, Map<string, number>>>();
+    // 三层键 k1 → k2 → 叶（同名符号合并，count 累计原始行数）；计入 pad/fill
+    //（占空间），折叠 meta，对齐 webview 默认视图与 realmap 的"kept 非 meta 平铺不变量"。
+    // by=section 用输出段名 outSection（linker script 粒度）——输入段名（`.text.foo`）
+    // 与输出段头会把两种粒度混进同一层，且与输出段同名的键只剩 fill 残渣；
+    // 无输出段上下文的行回落到 section（loose fills、discarded 列表）。
+    const levels = new Map<string, Map<string, Map<string, { size: number; rows: number }>>>();
     for (const s of doc.symbols) {
         if (s.status !== 'kept' || s.kind === 'meta') {
             continue;
         }
-        const k1 = by === 'kind' ? s.kind : by === 'object' ? objectKey(s) : s.section;
+        const k1 =
+            by === 'kind' ? s.kind : by === 'object' ? objectKey(s) : (s.outSection ?? s.section);
         const k2 = by === 'section' ? objectKey(s) : s.section;
         const leaf = s.demangled ?? s.name;
-        const l2 = levels.get(k1) ?? new Map<string, Map<string, number>>();
+        const l2 = levels.get(k1) ?? new Map<string, Map<string, { size: number; rows: number }>>();
         levels.set(k1, l2);
-        const l3 = l2.get(k2) ?? new Map<string, number>();
+        const l3 = l2.get(k2) ?? new Map<string, { size: number; rows: number }>();
         l2.set(k2, l3);
-        l3.set(leaf, (l3.get(leaf) ?? 0) + s.size);
+        const cur = l3.get(leaf) ?? { size: 0, rows: 0 };
+        cur.size += s.size;
+        cur.rows += 1;
+        l3.set(leaf, cur);
     }
 
-    const leavesOf = (m: Map<string, number>): TreeNode[] =>
+    const leavesOf = (m: Map<string, { size: number; rows: number }>): TreeNode[] =>
         [...m.entries()]
-            .map(([name, size]) => ({ name, size, count: 1 }))
+            .map(([name, { size, rows }]) => ({ name, size, count: rows }))
             .sort((a, b) => b.size - a.size);
 
     const nodes = [...levels.entries()]
@@ -368,6 +376,7 @@ function treemapPayload(doc: MapDocument, version: string, by: (typeof TREEMAP_B
         by,
         depth,
         tree: buildTree(doc, by, depth),
+        warnings: doc.warnings,
     };
 }
 
@@ -420,7 +429,7 @@ function treemapMd(tree: TreeNode[]): string {
     const lines: string[] = [];
     const walk = (nodes: TreeNode[], indent: string): void => {
         for (const n of nodes) {
-            lines.push(`${indent}- ${mdEscape(n.name)} — ${n.size} B${n.count > 1 ? ` (${n.count} symbols)` : ''}`);
+            lines.push(`${indent}- ${mdEscape(n.name)} — ${n.size} B${n.count > 1 ? ` (${n.count} rows)` : ''}`);
             if (n.children) {
                 walk(n.children, indent + '  ');
             }
@@ -578,7 +587,8 @@ export async function runCli(argv: string[], env: CliEnv = {}): Promise<CliRunRe
             return { code: EXIT.usage, err: `mapvisual: ${e.message}\n\n${USAGE}` };
         }
         if (e instanceof MapParseError) {
-            return { code: EXIT[e.kind], err: errJson(e.kind, e.message) };
+            // 运行时兜底：kind 增项而 EXIT 未同步时 undefined 会变成 exit 0（报错报成功）
+            return { code: EXIT[e.kind] ?? EXIT.internal, err: errJson(e.kind, e.message) };
         }
         return { code: EXIT.internal, err: errJson('internal', e instanceof Error ? e.message : String(e)) };
     }

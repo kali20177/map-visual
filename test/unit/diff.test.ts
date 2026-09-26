@@ -21,6 +21,7 @@ function sym(partial: Partial<SymbolRecord>): SymbolRecord {
         fromSectionName: false,
         isSystem: false,
         isLto: false,
+        outSection: null,
         ...partial,
     };
 }

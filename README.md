@@ -54,7 +54,7 @@ npm test                # vitest
 - `src/worker.ts / parser / demangle / analysis`（worker_threads 运行时）与 `src/cli.ts / cliApp.ts`（独立 CLI 进程）**禁止 import vscode** —— tsc 查不出这个错误（@types/vscode 使其可解析），但打包后 Worker 启动即崩，由 ESLint `no-restricted-imports` 拦截
 - `src/webview/**`（沙箱 iframe 运行时）禁止 vscode 与 Node 内置模块；本地依赖白名单限定 `types/protocol/webview`（解析结果必须经宿主下发），由 dependency-cruiser 强制
 - `extension / mapEditor / workerClient`（宿主）不得绕过 worker 直接引用解析器/分析器
-- CLI（cli/cliApp）不得引用宿主与 webview（dependency-cruiser `cli-no-host` / `cli-no-webview`）
+- CLI（cli/cliApp）只准依赖 worker 树核心与 types/protocol（dependency-cruiser `cli-allowlist` 白名单，宿主/浏览器文件默认被拦）
 
 提交时 `simple-git-hooks` 的 pre-commit 会对暂存文件自动执行 `eslint --fix`。`package.json` 的 `allowScripts` 声明了 esbuild / simple-git-hooks 的安装脚本白名单（npm ≥11 的 install-scripts 机制）。
 

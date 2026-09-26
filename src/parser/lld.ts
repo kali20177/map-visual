@@ -47,12 +47,17 @@ function makeRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 's
         isFill: false,
         isSystem: false,
         isLto: false,
+        outSection: null,
     };
 }
 
 export function parseLld(text: string, warnings: Warnings): { regions: never[]; symbols: SymbolRecord[] } {
     const symbols: SymbolRecord[] = [];
     let current: Contribution | null = null;
+    // the enclosing output section (Out column) — rows below carry it so
+    // consumers can group at linker-script granularity instead of the input
+    // section (`file:(.text.main)`)
+    let outSection: string | null = null;
 
     const flush = (): void => {
         if (!current) {
@@ -69,6 +74,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
                 size: c.size,
                 kind: classifySection(c.section),
                 section: c.section,
+                outSection,
                 object: c.object,
                 archive,
                 member,
@@ -85,6 +91,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
                 size: sym.size,
                 kind: classifySection(c.section),
                 section: c.section,
+                outSection,
                 object: c.object,
                 archive,
                 member,
@@ -115,8 +122,10 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         const desc = row[6];
 
         if (indent.length < 2) {
-            // output-section row: begins a new group
+            // output-section row: flushes the previous group (which belonged
+            // to the previous output section) and starts a new one
             flush();
+            outSection = desc.trim() || null;
             continue;
         }
 

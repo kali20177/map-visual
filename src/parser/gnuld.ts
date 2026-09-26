@@ -152,6 +152,7 @@ function baseRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 's
         isFill: false,
         isSystem: false,
         isLto: false,
+        outSection: null,
     };
 }
 
@@ -173,7 +174,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     // end so the regression is observable without flooding per-section.
     let budgetFallbacks = 0;
 
-    const emitGroup = (g: Contribution): void => {
+    const emitGroup = (g: Contribution, outSection: string | null): void => {
         const sizes = allocateSizes(g, warnings);
         const { archive, member } = parseObjectField(cleanObjectField(g.object));
         g.symbols.forEach((sym, i) => {
@@ -184,6 +185,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 size: sizes[i] ?? 0,
                 kind: classifySection(g.section),
                 section: g.section,
+                outSection,
                 object: g.object,
                 archive,
                 member,
@@ -204,6 +206,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 size: g.size,
                 kind: classifySection(g.section),
                 section: g.section,
+                outSection,
                 object: objClean,
                 archive: a2,
                 member: m2,
@@ -214,7 +217,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         }
     };
 
-    const emitFill = (f: FillEntry): void => {
+    const emitFill = (f: FillEntry, outSection: string | null): void => {
         symbols.push({
             ...baseRecord(),
             name: '*fill*',
@@ -222,6 +225,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             size: f.size,
             kind: 'pad',
             section: f.section,
+            outSection,
             object: '[pad]',
             lma: f.lma,
             status: 'kept',
@@ -239,7 +243,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         if (outSec) {
             outSec.units.push({ kind: 'group', group: g });
         } else {
-            emitGroup(g);
+            emitGroup(g, null);
         }
     };
 
@@ -253,9 +257,9 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         if (sec.vma == null || sec.size == null || sec.size === 0) {
             for (const u of sec.units) {
                 if (u.kind === 'group') {
-                    emitGroup(u.group);
+                    emitGroup(u.group, sec.name);
                 } else {
-                    emitFill(u.fill);
+                    emitFill(u.fill, sec.name);
                 }
             }
             return;
@@ -306,9 +310,9 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         }
         for (const u of chain ?? sec.units) {
             if (u.kind === 'group') {
-                emitGroup(u.group);
+                emitGroup(u.group, sec.name);
             } else {
-                emitFill(u.fill);
+                emitFill(u.fill, sec.name);
             }
         }
     };
@@ -333,6 +337,8 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             size,
             kind: classifySection(section),
             section,
+            // discarded 列表在 memory map 之外，没有输出段上下文
+            outSection: null,
             object: obj,
             archive,
             member,
@@ -609,9 +615,11 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     closeOutSec();
 
     // Fill entries seen outside any output section become pad rows attributed
-    // to their surrounding output section header.
+    // to their surrounding output section header. `outSection` stays null —
+    // they were not part of a resolved output section (the header name in
+    // `section` may even be stale after a LOAD/OUTPUT boundary).
     for (const fill of looseFills) {
-        emitFill(fill);
+        emitFill(fill, null);
     }
 
     if (budgetFallbacks > 0) {

@@ -11,3 +11,7 @@ test/fixtures/gnuld-x86/ifunc/test_ifunc
 .DS_Store
 mockdoc.json
 CLAUDE.md
+
+# 审核文档按惯例仅存本地（曾被从历史删除）；ZCode 工具自动生成本机忽略文件
+docs/REVIEW-*.md
+.zcodeignore

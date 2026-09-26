@@ -32,6 +32,16 @@ export interface SymbolRecord {
     size: number;
     kind: SymbolKind;
     section: string;
+    /**
+     * Output section (linker-script level: `.text`, Zephyr's dot-less `text`,
+     * ...) when the map identifies one — `section` is the input section
+     * (`.text.foo`). GNU ld prints both granularities, so grouping by
+     * `section` alone mixes them (a fill row's `section` is the output
+     * header, a symbol row's is the input section); group by `outSection`
+     * when a real output-section view is needed. Null outside any output
+     * section (loose fills, discarded lists).
+     */
+    outSection: string | null;
     object: string;
     archive: string | null;
     member: string | null;

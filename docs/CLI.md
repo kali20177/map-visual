@@ -66,14 +66,15 @@ mapvisual symbols <file> [--kind K]... [--status kept|discarded]
                   [--section RE] [--object RE] [--filter SUBSTR] [--min-size N]
                   [--sort size|addr|name] [--top N]
 mapvisual treemap  <file> [--by section|object|kind] [--depth 1|2|3]
-mapvisual diff     <fileA> <fileB> [--status added|removed|changed] [--min-delta N] [--top N]
+mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-delta N] [--top N]
 
-# 全局：--format auto|gnu-ld|lld   --no-demangle   --md   --progress   --help   --version
+# 全局参数：--format auto|gnu-ld|lld、--no-demangle、可选 --md 输出 Markdown 表格
 ```
 
 - `<file>` 均为必选位置参数；`--kind`/`--status` 可重复（OR 语义）；`--section`/`--object`/`--filter` 为正则/子串匹配。
 - `symbols` 默认按 size 降序（AI 的第一问永远是"谁最大"），且默认折叠 `meta`、隐藏 `discarded`（对齐 webview 默认视图），`--kind meta` / `--status discarded` 显式放开。
-- `summary`/`symbols`/`treemap`/`diff` 成功输出 JSON 到 stdout；**MapParseError.kind 类错误**（退出码 3–7）在 stderr 输出单行 JSON `{"error":{"kind":"notfound","message":"..."}}`；**usage 错误**（退出码 2）stderr 为人类可读消息 + Usage 帮助（见 §10 偏差 4）。
+- `treemap --by section` 按**输出段**（`outSection`，linker script 粒度，如 `.text`、Zephyr 的无点 `text`）分组——GNU ld 的 `section` 列混合输入段名（`.text.foo`）与输出段头两种粒度，直接拿来做顶层键会产出"每输入段一行 + 同名输出段只剩 fill 残渣"的坏视图；无输出段上下文的行（loose fills、discarded 列表）回落 `section`。
+- `summary`/`symbols`/`treemap`/`diff` 成功输出 JSON 到 stdout，四命令均带 `warnings`（diff 为 `A:`/`B:` 前缀合并）；**MapParseError.kind 类错误**（退出码 3–7）在 stderr 输出单行 JSON `{"error":{"kind":"notfound","message":"..."}}`；**usage 错误**（退出码 2）stderr 为人类可读消息 + Usage 帮助（见 §10 偏差 4）。
 
 **退出码**（与 `MapParseError.kind` 对齐，`src/parser/pipeline.ts:17`）：
 
@@ -109,10 +110,12 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed] [--min-delta
   "warnings": []
 }
 
-// symbols —— { ..., "count": N, "totals": {...}, "symbols": [SymbolRecord...] }（行结构与 webview 完全一致）
+// symbols —— { ..., "count": N, "totals": {...}, "symbols": [SymbolRecord...] }（行结构与 webview 完全一致，
+//            含 `outSection` 输出段名字段）
 // treemap —— { ..., "tree": [ { "name": ".text", "size": 5980, "count": 42, "children": [
 //                { "name": "main.o", "size": 812, "count": 3, "children": [ { "name": "main", "size": 100, "count": 1 } ] } ] } ] }
-//            顶层数组按 size 降序；depth 由 --depth 截断；Σ 同级 size == 父 size（§7 属性测试）
+//            顶层数组按 size 降序；depth 由 --depth 截断；Σ 同级 size == 父 size（§7 属性测试）；
+//            count 为原始行数（同名符号合并后仍累计，pad 行计入）
 
 // diff —— DiffResult（src/types.ts:109）外加聚合：
 {
@@ -148,9 +151,10 @@ void runCli(process.argv.slice(2)).then((r) => {
 实现要点与已知坑：
 
 1. **CJS 禁止 top-level await**——esbuild 对 cjs 输出不支持 TLA（worker 同为 cjs），入口用 IIFE/`.then` 包裹。
-2. **版本号注入**：`createRequire(import.meta.url)('../package.json').version`——esbuild 的 cjs 输出支持
-   `import.meta.url`（指向 dist/cli.js），vitest 下指向源文件，两条路径都解析到仓库根 package.json，
-   免去 esbuild `define` 在 vitest 下未定义的问题。
+2. **版本号注入**：esbuild 的 CJS 输出会把 `import.meta` 替换成**空对象**（dist 里 `import.meta.url`
+   拿不到——设计时预想的两条路径都可行并不成立，见 §10.5），所以 `dist/cli.js` 的版本号由 cli.ts
+   用 `createRequire(__filename)('../package.json')` 解析后经 `CliEnv.version` 注入；vitest 下是真
+   ESM，`import.meta.url` 回退路径可用。
 3. **wasmDir**：传 `__dirname`，与 worker 相同（`src/worker.ts:31`）；`--no-demangle` 时跳过初始化。
 4. `parseMapFile` 复用后，`--format`、`--no-demangle` 直接映射到 `ParseOptions`。
 5. treemap 聚合：kept 符号按 `--by` 键分组求和（section → object → symbol 三层），不引入 webview 的
@@ -186,12 +190,14 @@ CLI 属于 worker 树的消费者，必须与 worker 同等约束。按 AGENTS.m
 | 用例 | 断言 |
 |---|---|
 | summary 黄金基准 | rb-demo `flash===7648 && ram===6360`；zephyr `77256/16054`；gnuld-arm `4152/260`（fixture 路径以 `test/fixtures/real/README` 为准） |
-| 其余 22 份 fixture | summary 全部不抛错、`format` 识别正确 |
-| symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；`--no-demangle` 时 `demangled===null` |
-| treemap 属性 | 任意 fixture：Σ 同级 children size == 父 size == 对应 totals |
-| diff | 现有 fixtures 两两组合：added/removed/changed 计数、`deltaFlash === totalsB.flash - totalsA.flash` |
-| 错误路径 | notfound → code 3；构造 armlink 头部 → code 4 且消息含"未支持"；JS sourcemap → code 6；stderr 为合法 JSON |
-| `--md` | 输出含表格行且与 JSON 数值一致（抽查） |
+| 全量 fixture | summary 全部不抛错、`format` 识别正确（22 份） |
+| symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；默认折叠 meta、隐藏 discarded；`--no-demangle` 时 `demangled===null`；行携带 `outSection` |
+| treemap 属性 | 全量 fixture：Σ 同级 children size == 父 size == kept 非 meta 总量；`--depth 1/2` 截断正确 |
+| treemap 输出段回归 | rb-demo 顶层 `.text` > 5 KB（修复前仅 8 B 的 fill 残渣）、zephyr 顶层节点 < 200（修复前 1188）且 `text` 节点 > 60 KB |
+| diff | 4 组代表组合（同目录 + 跨目录）：`deltaFlash === totalsB.flash - totalsA.flash`、计数可从全量行复算、`--top` 截断保序 |
+| `--md` | 四命令均断言表格头与关键数字和 JSON 一致 |
+| flag 矩阵 | `--format` auto/显式匹配/错配补告警、`--object`/`--section` 正则、`--kind` 多值、`--min-size`/`--top 0` 边界、`--sort name/addr`、`--min-delta 0`、`-h/--help`、`--progress` |
+| 错误路径 | notfound → code 3；构造 armlink 头部 → code 4；JS sourcemap → code 6；stderr 单行 JSON；usage → code 2 且带 Usage 文本 |
 
 CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 
@@ -238,3 +244,9 @@ CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 4. **usage 错误（退出码 2）stderr 为人类可读 + Usage 帮助**，非 JSON——JSON 仅限 MapParseError.kind（退出码 3–7）：用法错误的受众是人，且 Usage 文本本身就是 AI 最需要的纠错信息。
 5. **版本号注入**：esbuild 会把 `import.meta` 替换成空对象（CJS 输出），`dist/cli.js` 里由 cli.ts 用 `createRequire(__filename)` 解析后经 `CliEnv.version` 注入；vitest（真 ESM）走 `import.meta.url` 回退。
 6. **treemap 计入 fill/pad 行**（kept 非 meta 全量，与 realmap 的"kept 非 meta 平铺不变量"一致）——pad 真实占用空间，排除会让树与 totals 对不上。
+7. **IR 新增 `SymbolRecord.outSection`**（P1 口径决策，采纳审核方向 1）：GNU ld 的 `section` 混合输入段（`.text.foo`）与输出段头两种粒度，treemap `--by section` 原实现因此产出"每输入段一行 + 同名输出段只剩 fill 残渣"的坏视图（rb-demo 顶层 `.text` 仅 8 B、zephyr 顶层 1188 节点）；两个解析器在行生成处补记输出段名（gnuld 取 `outSec.name`，lld 取 `Out` 列），`--by section` 改按输出段分组，无输出段上下文回落 `section`。webview 后续可用它增加输出段分组维度。
+8. **treemap `count` = 原始行数**（同名符号合并后仍累计，pad 行计入），非去重符号名数；`--md` 中显示 `(N rows)`。
+9. **warnings 四命令统一携带**（treemap 原本不带；diff 为 `A:`/`B:` 前缀合并）。
+10. **强制 `--format` 解析出 0 行时补告警**（pipeline 层，webview 同受益）——否则是"0 B 固件 + 零告警"的静默错答。
+11. **dependency-cruiser 改白名单式 `cli-allowlist`**（取代列表式的 cli-no-host/cli-no-webview——列表式曾漏掉 `diffPanel.ts`，lint/coupling 双双放行），`host-must-use-worker` 同步补 diffPanel；两者均经故意违规复测确认触发。
+12. **`mapvisual bogus --version` 返回 0 打印版本**（`--version`/`--help` 在命令校验之前处理）——与 `bogus` → exit 2 不完全一致，登记为已知行为。

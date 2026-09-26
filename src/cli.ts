@@ -11,6 +11,17 @@ import { runCli } from './cliApp';
 // esbuild 把 import.meta 替换为空对象，CJS 环境的版本号只能在这里用 __filename 解析
 const { version } = createRequire(__filename)('../package.json') as { version: string };
 
+// 管道读者先关（`mapvisual symbols big.map | head`）是本命令通道的首要用例：
+// EPIPE 不是错误，静默按成功收场；其余写错误照常上抛
+const onWriteError = (e: NodeJS.ErrnoException): void => {
+    if (e.code === 'EPIPE') {
+        process.exit(0);
+    }
+    throw e;
+};
+process.stdout.on('error', onWriteError);
+process.stderr.on('error', onWriteError);
+
 void runCli(process.argv.slice(2), {
     wasmDir: __dirname, // demangler wasm 由 build.mjs 拷在 dist/（同 worker 约定）
     version,

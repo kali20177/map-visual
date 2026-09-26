@@ -66,6 +66,7 @@ describe('buildGroups', () => {
         fromSectionName: false,
         isSystem: false,
         isLto: false,
+        outSection: null,
         ...over,
     });
 

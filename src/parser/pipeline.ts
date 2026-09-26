@@ -86,6 +86,12 @@ export async function parseMapText(
     progress('parsing symbols', 35);
     const warnings = new Warnings();
     const parsed = parser.parse(text, warnings);
+    if (opts.formatOverride !== 'auto' && parsed.symbols.length === 0) {
+        // 强制格式 + 零行 = 很可能猜错了格式；不告警的话结果是"0 B 固件 + 零告警"的静默错答
+        warnings.add(
+            `format override "${opts.formatOverride}" yielded no rows — the map may not be in this format`,
+        );
+    }
     progress('demangling', 65);
 
     for (const sym of parsed.symbols) {

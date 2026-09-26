@@ -19,7 +19,7 @@ npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 
 - `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）
 - `src/worker.ts` 与 `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/` — worker 运行时，纯 Node，禁止 vscode
-- `src/cli.ts` `src/cliApp.ts` — CLI 运行时（M6，第四入口，独立进程直接调 parser/analysis，不经 worker_threads）：逻辑在 cliApp 的 `runCli` 纯函数（可测、可被未来 MCP 复用），cli.ts 只做进程接线；同受禁 vscode 约束，且禁止引用宿主与 webview（depcruise cli-no-host / cli-no-webview）
+- `src/cli.ts` `src/cliApp.ts` — CLI 运行时（M6，第四入口，独立进程直接调 parser/analysis，不经 worker_threads）：逻辑在 cliApp 的 `runCli` 纯函数（可测、可被未来 MCP 复用），cli.ts 只做进程接线；同受禁 vscode 约束，且只准依赖 worker 树核心与 types/protocol（depcruise cli-allowlist 白名单）
 - `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块
 - `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）
 - `test/unit/` — vitest；`test/fixtures/` — 22 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、lld/、real/（外部真实工程黄金基准：rb-demo + zephyr，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
@@ -27,7 +27,7 @@ npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）
 
-- 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 禁止引用宿主与 webview**（cli-no-host / cli-no-webview）
+- 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/diffPanel/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 只准依赖 worker 树核心与 types/protocol**（cli-allowlist 白名单，列表式规则曾漏 diffPanel）
 - webview 本地依赖白名单：仅 `types.ts` / `protocol.ts` / `webview/` 内部
 - 修改边界规则本身要同步 eslint.config.mjs 与 .dependency-cruiser.cjs 两处，并用"故意违规"验证规则真的会触发
 
