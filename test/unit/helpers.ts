@@ -30,3 +30,11 @@ export function kept(doc: MapDocument): MapDocument['symbols'] {
 export function discarded(doc: MapDocument): MapDocument['symbols'] {
     return doc.symbols.filter((s) => s.status === 'discarded');
 }
+
+/** 全语料 fixture 相对路径（recursive walk，统一分隔符）。 */
+export function fixtureMaps(): string[] {
+    return fs
+        .readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.map'))
+        .map((f) => f.replaceAll('\\', '/'));
+}

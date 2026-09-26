@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cliApp';
 import type { CliRunResult } from '../../src/cliApp';
 import type { SymbolRecord } from '../../src/types';
-import { FIXTURES, ROOT, WASM_DIR, parseFixture } from './helpers';
+import { FIXTURES, ROOT, WASM_DIR, fixtureMaps, parseFixture } from './helpers';
 
 /**
  * CLI（M6，docs/CLI.md）契约测试：黄金基准数字、过滤/排序语义、treemap
@@ -82,13 +82,6 @@ function expectErr(r: CliRunResult, code: number, kind?: string): void {
 }
 
 const pkgVersion = (JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { version: string }).version;
-
-function fixtureMaps(): string[] {
-    return fs
-        .readdirSync(FIXTURES, { recursive: true, encoding: 'utf8' })
-        .filter((f) => f.endsWith('.map'))
-        .map((f) => f.replaceAll('\\', '/'));
-}
 
 /** 递归断言分区不变量（Σ 同级 children 的 size 与 count 都等于父级），返回树总 size */
 function checkTree(nodes: TreeNodeJson[]): number {

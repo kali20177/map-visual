@@ -75,11 +75,20 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 
 1. 以贡献为单位分组，**组键必须包含贡献地址**：`(object, section, contrib_addr, contrib_size)`。
    （imgui 实现漏了 `contrib_addr`，同对象同段同大小的两个贡献会串组、算出错误尺寸 —— 移植时修正。）
-2. 组内只有一个符号 → 直接取贡献大小。
+2. 组内只有一个符号 → 从符号起点取到贡献末尾；符号起点之前的字节（编译器
+   glue、literal pool，ld 不打印符号）输出为一行 `*unsym*` 记录（kind 同贡献段，
+   记入 `prefixPad`）。
 3. 多个符号 → 按地址升序：
    - 非末位符号：`size = next_addr - addr`
    - 末位符号：`size = contrib_start + contrib_size - addr`
-4. 验证不变量：`sum(组内符号 size) == contrib_size`（作为解析器自检 + 单测断言）。
+   - 首符号之前的字节同上输出 `*unsym*` 行
+4. 验证不变量：`sum(符号 size) + prefixPad == contrib_size` 在**所有分支**上成立
+   （解析器自检 + 单测断言；不成立时告警 `symbol sizes do not sum...`）。
+
+> 复审三轮（REVIEW-26a5b23 P1）教训：旧实现单符号分支无条件拿整个贡献 size，
+> 符号不在贡献起点时区间越过贡献末尾、压进下一贡献，而 Σ 校验在该分支恒真
+> —— 零告警的几何错位。`*unsym*` 行让前缀空洞显式化，总量与几何同时守恒；
+> `.data` 贡献的前缀因 kind 同段仍双占 flash+RAM。
 
 ### 1.5 特殊条目处理矩阵
 

@@ -269,6 +269,11 @@ describe('GNU ld — COMMON contributions and diagnostics', () => {
         expect(cmds!.kind).toBe('other');
         expect(cmds!.size).toBe(16);
         expect(cmds!.storage).toEqual(['flash']);
+        // P1（REVIEW-26a5b23）: main 在贡献偏移 6，size 是到贡献末尾的 4B，
+        // 前缀 6B 输出为 *unsym* 行（总量 44 不变）
+        const main = findSym(doc, 'main');
+        expect(main!.size).toBe(4);
+        expect(doc.symbols.find((x) => x.name === '*unsym*')!.size).toBe(6);
         // ld --print-memory-usage golden: FLASH 44 B / RAM 0 B
         expect(doc.totals.flash).toBe(44);
         expect(doc.totals.ram).toBe(0);
@@ -460,14 +465,14 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
             '                0x20000000                dv',
             '._user_heap_stack',
             '                0x20000008      0x408',
-            ' *fill*         0x20000008        0x8 ',
+            ' *fill*         0x20000008      0x408 ',
         ].join('\n');
         const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
         expect(doc.warnings).toEqual([]);
         const fills = doc.symbols.filter((s) => s.isFill);
         expect(fills.map((f) => f.storage)).toEqual([['ram']]);
         expect(doc.totals.flash).toBe(8);
-        expect(doc.totals.ram).toBe(16);
+        expect(doc.totals.ram).toBe(8 + 0x408);
     });
 
     it('prefers symbol-bearing units among same-VMA candidates in both print orders', () => {
@@ -531,11 +536,11 @@ describe('GNU ld — Zephyr dot-less script sections', () => {
         const { symbols } = parseGnuLd(
             [
                 ZHEAD,
-                'text            0x08000000      0x20',
+                'text            0x08000000      0x14',
                 ' .text          0x08000000      0x10 a.o',
                 '                0x08000000                main',
                 ' *fill*         0x08000010        0x4 ',
-                'bss             0x20000000      0x10',
+                'bss             0x20000000       0x8',
                 ' .bss.x         0x20000000       0x8 a.o',
                 '                0x20000000                x',
             ].join('\n'),
@@ -609,7 +614,7 @@ describe('GNU ld — Zephyr dot-less script sections', () => {
             'text             0x08000000       0x10',
             ' .text           0x08000000       0x10 a.o',
             '                 0x08000000                main',
-            'bss              0x20000338       0x10',
+            'bss              0x20000338        0x8',
             ' .bss.x          0x20000338        0x8 a.o',
             '                 0x20000338                x',
             'k_heap_area       0x200002fc       0x18 load address 0x08012d90',
@@ -639,17 +644,17 @@ describe('size allocation algorithm (property-ish)', () => {
 
     it('single symbol takes the whole contribution', () => {
         const w = new Warnings();
-        expect(allocateSizes(mk(0x100, 0x40, [0x100]), w)).toEqual([0x40]);
+        expect(allocateSizes(mk(0x100, 0x40, [0x100]), w).sizes).toEqual([0x40]);
     });
 
     it('splits by address deltas with tail to the last symbol', () => {
         const w = new Warnings();
-        expect(allocateSizes(mk(0x100, 0x40, [0x100, 0x110, 0x130]), w)).toEqual([0x10, 0x20, 0x10]);
+        expect(allocateSizes(mk(0x100, 0x40, [0x100, 0x110, 0x130]), w).sizes).toEqual([0x10, 0x20, 0x10]);
     });
 
     it('handles unsorted symbol lines', () => {
         const w = new Warnings();
-        const sizes = allocateSizes(mk(0x100, 0x40, [0x130, 0x100, 0x110]), w);
+        const { sizes } = allocateSizes(mk(0x100, 0x40, [0x130, 0x100, 0x110]), w);
         // input order: sym0@0x130 (tail 0x10), sym1@0x100 (0x10), sym2@0x110 (0x20)
         expect(sizes).toEqual([0x10, 0x10, 0x20]);
         expect(sizes.reduce((a, b) => a + b, 0)).toBe(0x40);
@@ -657,10 +662,34 @@ describe('size allocation algorithm (property-ish)', () => {
 
     it('clamps symbols outside the contribution and warns', () => {
         const w = new Warnings();
-        const sizes = allocateSizes(mk(0x100, 0x40, [0x100, 0x1000]), w);
+        const { sizes } = allocateSizes(mk(0x100, 0x40, [0x100, 0x1000]), w);
         expect(sizes[0]).toBe(0x40);
         expect(sizes[1]).toBe(0);
         expect(w.list().length).toBeGreaterThan(0);
+    });
+
+    it('clamps a single symbol starting mid-contribution and returns the prefix', () => {
+        const w = new Warnings();
+        const a = allocateSizes(mk(0x100, 0x40, [0x110]), w);
+        expect(a.sizes).toEqual([0x30]);
+        expect(a.prefixPad).toBe(0x10);
+        expect(w.list()).toEqual([]);
+    });
+
+    it('models the prefix gap before the first symbol in multi-symbol groups', () => {
+        const w = new Warnings();
+        const a = allocateSizes(mk(0x100, 0x40, [0x110, 0x120]), w);
+        expect(a.sizes).toEqual([0x10, 0x20]);
+        expect(a.prefixPad).toBe(0x10);
+        expect(w.list()).toEqual([]);
+    });
+
+    it('warns on a single symbol sitting before the contribution', () => {
+        const w = new Warnings();
+        const a = allocateSizes(mk(0x100, 0x40, [0x80]), w);
+        expect(a.sizes).toEqual([0x40]);
+        expect(a.prefixPad).toBe(0);
+        expect(w.list()).toHaveLength(1);
     });
 
     it('preserves the invariant on randomized inputs', () => {
@@ -674,9 +703,89 @@ describe('size allocation algorithm (property-ish)', () => {
                 const j = Math.floor(Math.random() * (i + 1));
                 [addrs[i], addrs[j]] = [addrs[j], addrs[i]];
             }
-            const sizes = allocateSizes(mk(0x100, size, addrs), w);
+            const { sizes } = allocateSizes(mk(0x100, size, addrs), w);
             expect(sizes.reduce((a, b) => a + b, 0)).toBe(size);
             expect(sizes.every((s) => s >= 0)).toBe(true);
         }
+    });
+});
+
+
+describe('GNU ld — geometry regressions (review P1/P2, REVIEW-26a5b23)', () => {
+    it('models the unsymboled prefix of a single-symbol contribution (*unsym*)', () => {
+        // 贡献 [0x08000000,0x10)，符号在偏移 4：旧实现把整个 0x10 给符号，
+        // 区间越过贡献末尾且零告警（Σ 校验在单符号分支恒真）。
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            ['Linker script and memory map', '', ' .text           0x08000000       0x10 a.o', '                0x08000004                partial_func'].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        const fn = symbols.find((x) => x.name === 'partial_func')!;
+        expect(fn.size).toBe(0xc);
+        const pad = symbols.find((x) => x.name === '*unsym*')!;
+        expect(pad.addr).toBe(0x08000000);
+        expect(pad.size).toBe(4);
+        expect(pad.kind).toBe('code');
+        expect(symbols.reduce((a, x) => a + x.size, 0)).toBe(0x10);
+    });
+
+    it('.data prefix bytes occupy the flash load image too', async () => {
+        const text = [
+            'Memory Configuration',
+            '',
+            'Name             Origin             Length             Attributes',
+            'FLASH            0x08000000 0x00020000 xr',
+            'RAM              0x20000000 0x00010000 xrw',
+            '',
+            'Linker script and memory map',
+            '',
+            '.data            0x20000000       0x10 load address 0x08000040',
+            ' .data           0x20000000       0x10 a.o',
+            '                0x20000008                dv',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const pad = doc.symbols.find((x) => x.name === '*unsym*')!;
+        expect(pad.kind).toBe('data');
+        expect(pad.storage).toEqual(['flash', 'ram']);
+        expect(doc.totals.flash).toBe(0x10);
+        expect(doc.totals.ram).toBe(0x10);
+    });
+
+    it('keeps every unit of non-alloc (meta) sections without tiling — .ARM.attributes form', () => {
+        // 非分配段的 VMA 列是文件内偏移累加，与段头 size 不构成地址空间，
+        // tiling 前提不成立——keep-all 静默是正确行为而非退化。
+        const w = new Warnings();
+        const lines = ['Linker script and memory map', '', '.ARM.attributes  0x00000000       0x29'];
+        for (let i = 0; i < 9; i++) {
+            lines.push(` .ARM.attributes  0x00000000       0x1d a${i}.o`);
+        }
+        const { symbols } = parseGnuLd(lines.join('\n'), w);
+        expect(symbols).toHaveLength(9);
+        expect(w.list()).toEqual([]);
+    });
+
+    it('warns when an alloc section cannot tile exactly even though the budget is intact', () => {
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text            0x08000000       0x20',
+                ' .text           0x08000000       0x10 a.o',
+                '                0x08000000                func_a',
+                ' .text           0x08000010       0x8  a.o',
+                '                0x08000010                stale_copy',
+                ' .text           0x08000014       0x8  b.o',
+                '                0x08000014                func_b',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toHaveLength(1);
+        expect(w.list()[0]!.message).toContain('tiling search failed');
+        expect(w.list()[0]!.message).not.toContain('budget');
+        // keep-all 兜底保留全部行
+        expect(symbols.map((x) => x.name)).toContain('stale_copy');
     });
 });

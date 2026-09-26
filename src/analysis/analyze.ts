@@ -1,6 +1,7 @@
 import type { MapDocument, MapTotals, MemoryRegion, SymbolRecord, Storage, SymbolKind } from '../types';
 import { EMPTY_KIND_TOTALS } from '../types';
 import { classifySection } from '../parser/classify';
+import type { Warnings } from '../parser/warnings';
 
 function regionOf(regions: MemoryRegion[], addr: number): MemoryRegion | undefined {
     return regions.find((r) => addr >= r.origin && addr < r.origin + r.length);
@@ -140,11 +141,38 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
 }
 
 /** Convenience for the pipeline: mutates doc with roles + storage + totals. */
-export function finalize(doc: MapDocument): MapDocument {
+export function finalize(doc: MapDocument, warnings?: Warnings): MapDocument {
     assignRegionRoles(doc.regions, doc.symbols);
     downgradeContentlessRegions(doc.regions, doc.symbols);
+    if (warnings) {
+        warnRegionRoleConflicts(doc.regions, warnings);
+    }
     doc.totals = computeStorageAndTotals(doc);
     return doc;
+}
+
+// Same name families the name fallback uses — a strong mismatch between what
+// the content anchors decided and what the region is called means the single
+// anchor misfired (e.g. code linked to run from RAM lands first). `itcm` is
+// deliberately not in the flash set here: anchoring it to ram is physically
+// right, so neither direction should warn.
+const FLASH_CONFLICT_RE = /(flash|rom)/i;
+const RAM_CONFLICT_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|data)/i;
+
+/**
+ * Cross-check the content anchors against region names. The anchor logic is
+ * deliberately name-blind, but it only has single-sided evidence — when its
+ * verdict contradicts a strong RAM/flash name the roles are probably swapped
+ * wholesale (i.MX RT style code-in-RAM layouts) and the user gets no signal.
+ */
+function warnRegionRoleConflicts(regions: MemoryRegion[], warnings: Warnings): void {
+    for (const r of regions) {
+        if (r.role === 'flash' && RAM_CONFLICT_RE.test(r.name)) {
+            warnings.add(`region "${r.name}" holds executable content but its name suggests RAM — flash/ram roles may be swapped`);
+        } else if (r.role === 'ram' && FLASH_CONFLICT_RE.test(r.name)) {
+            warnings.add(`region "${r.name}" holds zero-init content but its name suggests flash — flash/ram roles may be swapped`);
+        }
+    }
 }
 
 /**

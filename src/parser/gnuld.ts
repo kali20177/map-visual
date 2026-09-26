@@ -106,18 +106,38 @@ export function cleanObjectField(raw: string): string {
 /**
  * Size allocation inside one contribution (FORMATS §1.4): symbols are
  * consecutive, non-last = next-addr − addr, last = contribution end − addr.
- * Returns sizes in the same order as group.symbols.
+ * Bytes between the contribution start and its first symbol are not claimed
+ * by any symbol line (compiler glue, literal pools) — they are returned as
+ * `prefixPad` so the caller can emit an explicit row and
+ * Σsizes + prefixPad == group.size holds on every branch.
  */
-export function allocateSizes(group: Contribution, warnings: Warnings): number[] {
+export interface Allocation {
+    sizes: number[];
+    prefixPad: number;
+}
+
+export function allocateSizes(group: Contribution, warnings: Warnings): Allocation {
     const syms = group.symbols;
     const n = syms.length;
     if (n === 0) {
-        return [];
+        return { sizes: [], prefixPad: 0 };
     }
     if (n === 1) {
-        return [group.size];
+        // A single symbol does not necessarily start at the contribution
+        // start (LTO merged headers, literal pools). Handing it the whole
+        // size used to push its interval past the contribution end with the
+        // Σ==size check trivially true — clamp to the tail and model the
+        // unclaimed prefix instead.
+        const sym = syms[0];
+        if (sym.addr < group.vma || sym.addr >= group.vma + group.size) {
+            warnings.add('symbol address outside its contribution; size clamped', `${sym.name} @ 0x${sym.addr.toString(16)}`);
+        }
+        const prefixPad = Math.max(0, Math.min(group.size, sym.addr - group.vma));
+        const size = Math.max(0, group.vma + group.size - sym.addr);
+        return { sizes: [Math.min(size, group.size)], prefixPad };
     }
     const order = syms.map((_, i) => i).sort((a, b) => syms[a].addr - syms[b].addr);
+    const prefixPad = Math.max(0, syms[order[0]].addr - group.vma);
     const sortedSizes: number[] = [];
     for (let k = 0; k < n - 1; k++) {
         const delta = syms[order[k + 1]].addr - syms[order[k]].addr;
@@ -135,10 +155,10 @@ export function allocateSizes(group: Contribution, warnings: Warnings): number[]
     });
 
     const sum = result.reduce((a, b) => a + b, 0);
-    if (sum !== group.size) {
+    if (sum + prefixPad !== group.size) {
         warnings.add('symbol sizes do not sum to contribution size (padding or annotation drift)', `${group.section}: ${sum} vs ${group.size}`);
     }
-    return result;
+    return { sizes: result, prefixPad };
 }
 
 function baseRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 'section' | 'object' | 'status' | 'fromSectionName'> {
@@ -169,13 +189,16 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     let group: Contribution | null = null;
     let discardedPendingName: string | null = null;
     let outSec: OutSection | null = null;
-    // Output sections whose tiling search blew the visit budget fall back to
-    // keep-all — the pre-tiling double-count behavior. Surfaced once at the
-    // end so the regression is observable without flooding per-section.
-    let budgetFallbacks = 0;
+    // Output sections whose tiling search failed fall back to keep-all — the
+    // pre-tiling double-count behavior. Surfaced once at the end so the
+    // regression is observable without flooding per-section; meta sections
+    // (non-alloc) are exempt, see resolveOutSec.
+    let tilingFallbacks = 0;
+    let budgetFailures = 0;
 
     const emitGroup = (g: Contribution, outSection: string | null): void => {
-        const sizes = allocateSizes(g, warnings);
+        const { sizes, prefixPad } = allocateSizes(g, warnings);
+        const kind = classifySection(g.section);
         const { archive, member } = parseObjectField(cleanObjectField(g.object));
         g.symbols.forEach((sym, i) => {
             symbols.push({
@@ -183,7 +206,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 name: sym.name,
                 addr: sym.addr,
                 size: sizes[i] ?? 0,
-                kind: classifySection(g.section),
+                kind,
                 section: g.section,
                 outSection,
                 object: g.object,
@@ -194,6 +217,28 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 fromSectionName: false,
             });
         });
+        // Unclaimed bytes between the contribution start and its first symbol
+        // (compiler glue, literal pools — ld prints no symbol for them).
+        // Emitted with the contribution's own kind so storage accounting
+        // matches the section's semantics (e.g. .data prefixes occupy the
+        // flash load image too); a plain pad row would drop that.
+        if (prefixPad > 0) {
+            symbols.push({
+                ...baseRecord(),
+                name: '*unsym*',
+                addr: g.vma,
+                size: prefixPad,
+                kind,
+                section: g.section,
+                outSection,
+                object: g.object,
+                archive,
+                member,
+                lma: g.lma,
+                status: 'kept',
+                fromSectionName: false,
+            });
+        }
         // Contribution without any symbol line (`.comment`, `.eh_frame`, debug
         // sections, ...): keep it as one section-level row so totals stay exact.
         if (g.symbols.length === 0 && g.size > 0) {
@@ -204,7 +249,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 name: g.section,
                 addr: g.vma,
                 size: g.size,
-                kind: classifySection(g.section),
+                kind,
                 section: g.section,
                 outSection,
                 object: objClean,
@@ -254,6 +299,21 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
      * exists (unusual layouts) fall back to keeping every unit.
      */
     const resolveOutSec = (sec: OutSection): void => {
+        // Non-alloc sections have no address-space semantics: ld prints a VMA
+        // per contribution that is really a file offset accumulation (every
+        // object's `.ARM.attributes` block), so contributions can never tile
+        // the header extent and the search would always fail. keep-all is the
+        // correct behavior for them — and saves a pointless search.
+        if (classifySection(sec.name) === 'meta') {
+            for (const u of sec.units) {
+                if (u.kind === 'group') {
+                    emitGroup(u.group, sec.name);
+                } else {
+                    emitFill(u.fill, sec.name);
+                }
+            }
+            return;
+        }
         if (sec.vma == null || sec.size == null || sec.size === 0) {
             for (const u of sec.units) {
                 if (u.kind === 'group') {
@@ -305,8 +365,11 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             return null;
         };
         const chain = search(start, 0, []);
-        if (!chain && budgetExhausted) {
-            budgetFallbacks++;
+        if (!chain) {
+            tilingFallbacks++;
+            if (budgetExhausted) {
+                budgetFailures++;
+            }
         }
         for (const u of chain ?? sec.units) {
             if (u.kind === 'group') {
@@ -629,10 +692,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         emitFill(fill, null);
     }
 
-    if (budgetFallbacks > 0) {
-        warnings.add(
-            `tiling budget exhausted in ${budgetFallbacks} output section(s) — kept all candidate lines (possible double count)`,
-        );
+    if (tilingFallbacks > 0) {
+        let msg = `tiling search failed in ${tilingFallbacks} output section(s) — kept all candidate lines (possible double count)`;
+        if (budgetFailures > 0) {
+            msg += `; visit budget exhausted in ${budgetFailures} of them`;
+        }
+        warnings.add(msg);
     }
 
     // Rows whose name came from a section often embed the mangled symbol

@@ -86,10 +86,13 @@ export async function parseMapText(
     progress('parsing symbols', 35);
     const warnings = new Warnings();
     const parsed = parser.parse(text, warnings);
-    if (opts.formatOverride !== 'auto' && parsed.symbols.length === 0) {
-        // 强制格式 + 零行 = 很可能猜错了格式；不告警的话结果是"0 B 固件 + 零告警"的静默错答
+    if (parsed.symbols.length === 0) {
+        // 零行 = "0 B 固件 + 零告警" 的静默错答：auto 检测被头部锚点误导
+        // （如文件被截断、内容被裁剪），或强制格式猜错时都要说一声
         warnings.add(
-            `format override "${opts.formatOverride}" yielded no rows — the map may not be in this format`,
+            opts.formatOverride !== 'auto'
+                ? `format override "${opts.formatOverride}" yielded no rows — the map may not be in this format`
+                : 'no rows parsed — the map may be truncated or its memory map content is missing',
         );
     }
     progress('demangling', 65);
@@ -128,7 +131,9 @@ export async function parseMapText(
         },
         warnings: warnings.list(),
     };
-    finalize(doc);
+    finalize(doc, warnings);
+    // finalize 内部(区域角色冲突检查)可能补充告警 — list() 是快照，须重取
+    doc.warnings = warnings.list();
     progress('done', 100);
     return doc;
 }

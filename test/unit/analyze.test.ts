@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assignRegionRoles, computeStorageAndTotals } from '../../src/analysis/analyze';
 import { parseMapText } from '../../src/parser/pipeline';
+import { parseFixture } from './helpers';
 import type { MapDocument, MemoryRegion, SymbolRecord } from '../../src/types';
 
 function region(name: string, origin: number, length: number): MemoryRegion {
@@ -48,6 +49,38 @@ describe('region role assignment', () => {
         expect(regions[0].role).toBe('ram');
         expect(regions[1].role).toBe('flash');
         expect(regions[2].role).toBe('other');
+    });
+});
+
+describe('region role conflict warnings (review P5, REVIEW-26a5b23)', () => {
+    it('warns when the first code symbol lands in a RAM-named region', async () => {
+        // i.MX RT 风格：代码链接到 RAM 执行且排最前——单锚点会把 OCRAM
+        // 判成 flash，必须有告警信号
+        const text = [
+            'Memory Configuration',
+            '',
+            'Name             Origin             Length             Attributes',
+            'FLASH            0x60000000 0x00400000 xr',
+            'OCRAM            0x20200000 0x00080000 xrw',
+            '',
+            'Linker script and memory map',
+            '',
+            '.text            0x20200000       0x10',
+            ' .text           0x20200000       0x10 ram_code.o',
+            '                0x20200000                ram_func',
+            '.bss             0x20201000       0x10',
+            ' .bss            0x20201000       0x10 vars.o',
+            '                0x20201000                my_var',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        const conflict = doc.warnings.filter((w) => w.message.includes('may be swapped'));
+        expect(conflict).toHaveLength(1);
+        expect(conflict[0].message).toContain('OCRAM');
+    });
+
+    it('stays silent for conventional FLASH/RAM layouts', async () => {
+        const doc = await parseFixture('real/stm32f103-rb-demo-boot.map');
+        expect(doc.warnings).toEqual([]);
     });
 });
 
