@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile (esbuild)
+        run: npm run compile
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Architecture coupling check
+        run: npm run check:coupling
+
+      - name: Unit tests
+        run: npm test
+
+      # 仅 main 分支推送时打包 vsix 并上传为构建产物（vsce 从 origin 自动识别 GitHub 仓库）
+      - name: Package VSIX
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npx -y @vscode/vsce package
+
+      - name: Upload VSIX artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapvisual-vsix
+          path: '*.vsix'
+          if-no-files-found: error
