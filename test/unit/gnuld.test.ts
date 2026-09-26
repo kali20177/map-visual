@@ -391,6 +391,113 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
         expect(doc.totals.flash).toBe(0);
         expect(doc.totals.ram).toBe(0x408);
     });
+
+    it('parses a wrapped dot-less section name and keeps the contribution off the outer section', () => {
+        // A dot-less custom section name longer than the column width wraps:
+        // name alone on its own line, address + object on the next.
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text           0x08000000       0x20',
+                ' .text          0x08000000       0x10 a.o',
+                '                0x08000000                main',
+                ' shellCommand_table_for_everything_long',
+                '                0x08000010        0x10 a.o',
+                '                0x08000010                cmds',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        const cmds = symbols.find((s) => s.name === 'cmds');
+        expect(cmds).toBeDefined();
+        expect(cmds!.section).toBe('shellCommand_table_for_everything_long');
+        expect(cmds!.kind).toBe('other');
+        expect(cmds!.size).toBe(0x10);
+    });
+
+    it('takes a bare extent line as a two-line header extent and tiles against it', () => {
+        // Corpus form of `._user_heap_stack`: col0 bare name + plain
+        // `<vma> <size>` (no `load address`). Tiling must engage and drop a
+        // stale overlapping row.
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '._user_heap_stack',
+                '                0x20002aec      0x604',
+                ' .stale         0x20002aec        0x8 a.o',
+                ' *fill*         0x20002aec        0x4',
+                ' .heap          0x20002af0      0x600 a.o',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        expect(symbols.map((s) => s.name)).not.toContain('.stale');
+        expect(symbols.reduce((a, s) => a + s.size, 0)).toBe(0x604);
+    });
+
+    it('keeps bare-extent NOLOAD fills out of the flash image (corpus ._user_heap_stack form)', async () => {
+        const text = [
+            SYNTH_HEAD,
+            '.data           0x20000000        0x8 load address 0x08000010',
+            ' *(.data*)',
+            ' .data          0x20000000        0x8 a.o',
+            '                0x20000000                dv',
+            '._user_heap_stack',
+            '                0x20000008      0x408',
+            ' *fill*         0x20000008        0x8 ',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const fills = doc.symbols.filter((s) => s.isFill);
+        expect(fills.map((f) => f.storage)).toEqual([['ram']]);
+        expect(doc.totals.flash).toBe(8);
+        expect(doc.totals.ram).toBe(16);
+    });
+
+    it('prefers symbol-bearing units among same-VMA candidates in both print orders', () => {
+        // Stale pre-merge re-prints carry no symbol lines. When a snapshot
+        // size coincides with the real contribution step, the tiling chain
+        // must still keep the real rows — whether the snapshot was printed
+        // before or after them.
+        for (const snapFirst of [true, false]) {
+            const w = new Warnings();
+            const lines = ['Linker script and memory map', '', '.rodata         0x00001000       0x100'];
+            for (const c of [0x1000, 0x1040, 0x1080, 0x10c0]) {
+                const snap = ` .snap_${c.toString(16)}  0x${c.toString(16)}  0x40 a.o`;
+                const real = [
+                    ` .real          0x${c.toString(16)}  0x40 a.o`,
+                    `                0x${c.toString(16)}                realsym${c.toString(16)}`,
+                ];
+                lines.push(...(snapFirst ? [snap, ...real] : [...real, snap]));
+            }
+            const { symbols } = parseGnuLd(lines.join('\n'), w);
+            expect(w.list()).toEqual([]);
+            expect(symbols.filter((s) => s.name.startsWith('realsym'))).toHaveLength(4);
+            expect(symbols.filter((s) => s.name.startsWith('.snap'))).toEqual([]);
+            expect(symbols.reduce((a, s) => a + s.size, 0)).toBe(0x100);
+        }
+    });
+
+    it('falls back to keep-all with an observable warning when the tiling budget blows', () => {
+        const w = new Warnings();
+        const lines = ['Linker script and memory map', '', '.rodata         0x00001000       0x200'];
+        for (let i = 0; i < 160; i++) {
+            lines.push(` .top${i}         0x00001000       0x100 a.o`);
+        }
+        for (let i = 0; i < 160; i++) {
+            lines.push(` .mid${i}         0x00001100        0x80 a.o`);
+        }
+        const { symbols } = parseGnuLd(lines.join('\n'), w);
+        // no chain tiles 0x200 with 0x100 + 0x80 — the search exhausts its
+        // visit budget and falls back to keeping every unit, visibly.
+        expect(symbols).toHaveLength(320);
+        expect(w.list()).toHaveLength(1);
+        expect(w.list()[0]!.message).toContain('budget');
+    });
 });
 
 describe('size allocation algorithm (property-ish)', () => {

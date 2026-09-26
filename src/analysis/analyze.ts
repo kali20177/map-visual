@@ -151,23 +151,25 @@ export function finalize(doc: MapDocument): MapDocument {
  * ROM-ish name) occupy no storage; downgrade them so their symbols claim none.
  * A region counts as holding storage content when storage-kind symbols live at
  * its VMA, when their load image (lma) lands in it, or when fills belonging to
- * a storage-kind section sit in it.
+ * a storage-kind section sit in it. A region holding no rows but fills is
+ * never downgraded: pad-only NOLOAD heap/stack sections still occupy storage,
+ * and a fill's kind is inherited from its section, so it proves nothing about
+ * the region's own alloc semantics.
  */
 function downgradeContentlessRegions(regions: MemoryRegion[], symbols: SymbolRecord[]): void {
     const storageKinds = new Set<SymbolKind>(['code', 'rodata', 'data', 'bss']);
     const inRegion = (addr: number, r: MemoryRegion): boolean => addr >= r.origin && addr < r.origin + r.length;
+    const reaches = (s: SymbolRecord, r: MemoryRegion): boolean =>
+        s.status === 'kept' && (inRegion(s.addr, r) || (s.lma != null && inRegion(s.lma, r)));
     const holdsStorage = (s: SymbolRecord, r: MemoryRegion): boolean => {
-        if (s.status !== 'kept') {
-            return false;
-        }
         const kind = s.isFill ? classifySection(s.section) : s.kind;
-        if (!storageKinds.has(kind)) {
-            return false;
-        }
-        return inRegion(s.addr, r) || (s.lma != null && inRegion(s.lma, r));
+        return storageKinds.has(kind) && reaches(s, r);
     };
     for (const r of regions) {
         if (r.role === 'other') {
+            continue;
+        }
+        if (!symbols.some((s) => reaches(s, r) && !s.isFill)) {
             continue;
         }
         if (!symbols.some((s) => holdsStorage(s, r))) {

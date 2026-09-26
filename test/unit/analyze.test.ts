@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assignRegionRoles, computeStorageAndTotals } from '../../src/analysis/analyze';
+import { parseMapText } from '../../src/parser/pipeline';
 import type { MapDocument, MemoryRegion, SymbolRecord } from '../../src/types';
 
 function region(name: string, origin: number, length: number): MemoryRegion {
@@ -112,5 +113,59 @@ describe('storage + totals', () => {
         expect(totals.ram).toBe(12);
         expect(totals.regions.find((r) => r.region.name === 'FLASH')!.used).toBe(18);
         expect(totals.regions.find((r) => r.region.name === 'RAM')!.used).toBe(12);
+    });
+});
+
+describe('region downgrade (contentless regions)', () => {
+    const CFG = (regions: string): string =>
+        [
+            'Memory Configuration',
+            '',
+            'Name             Origin             Length             Attributes',
+            regions,
+            '',
+            '',
+            'Linker script and memory map',
+            '',
+        ].join('\n');
+
+    it('keeps the role of a region holding nothing but NOLOAD pads (stack fill)', async () => {
+        // RAM contains only a *fill* under a two-line .stack header: a fill
+        // inherits its section's kind ('other'), so it proves nothing about
+        // the region's alloc semantics — the name-based ram role must stand.
+        const doc = await parseMapText(
+            CFG('FLASH            0x08000000 0x80000 xr\nRAM              0x20000000 0x10000 xrw') +
+                '\n.text           0x08000000       0x10\n .text          0x08000000       0x10 a.o\n' +
+                '                0x08000000                main\n' +
+                '.stack\n                0x20000000      0x400\n *fill*         0x20000000      0x400\n',
+            'synthetic',
+            { demangle: false, formatOverride: 'gnu-ld' },
+            undefined,
+        );
+        expect(doc.warnings).toEqual([]);
+        expect(doc.regions.find((r) => r.name === 'RAM')!.role).toBe('ram');
+        const fill = doc.symbols.find((s) => s.isFill)!;
+        expect(fill.storage).toEqual(['ram']);
+        expect(doc.totals.ram).toBe(0x400);
+    });
+
+    it('still downgrades regions whose only real rows are non-alloc (COPY-style)', async () => {
+        // A ROM-named region holding only a custom-section contribution
+        // (kind other, e.g. script (COPY) output): downgraded to other, its
+        // symbols claim no storage.
+        const doc = await parseMapText(
+            CFG('FLASH            0x08000000 0x10000 xr\nCFGROM           0x08010000 0x1000  r') +
+                '\n.text           0x08000000       0x10\n .text          0x08000000       0x10 a.o\n' +
+                '                0x08000000                main\n' +
+                '.cfg            0x08010000       0x20\n *(.cfg*)\n' +
+                ' shellCommand   0x08010000       0x20 a.o\n                0x08010000                shellCommands\n',
+            'synthetic',
+            { demangle: false, formatOverride: 'gnu-ld' },
+            undefined,
+        );
+        expect(doc.warnings).toEqual([]);
+        expect(doc.regions.find((r) => r.name === 'CFGROM')!.role).toBe('other');
+        expect(doc.symbols.find((s) => s.name === 'shellCommands')!.storage).toEqual([]);
+        expect(doc.totals.flash).toBe(16);
     });
 });

@@ -16,7 +16,11 @@ const OUTPUT_SECTION_RE =
 // COMMON / LARGE_COMMON carry no dot at all.
 const CONTRIBUTION_RE = /^\s+([A-Za-z_.][^\s]*)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const CONTINUATION_RE = /^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
-const SECTION_NAME_RE = /^\s+(\.[^\s]+)\s*$/;
+// Standalone section-name lines: usually dotted, but dot-less script sections
+// wrap the same way once the name grows past the column width — the address
+// and object follow on the next line. Wildcard echoes (`*`, `name(...)`),
+// `FILL `, `[!provide]` and contribution lines are all matched earlier.
+const SECTION_NAME_RE = /^\s+([A-Za-z_.][^\s]*)\s*$/;
 const SYMBOL_RE = /^\s+0x([0-9a-fA-F]+)\s+(.+?)\s*$/;
 const FILL_RE = /^\s+\*fill\*\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)/;
 const DISCARDED_ONE_LINE_RE = /^\s+([^\s]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s+(\S+)\s*$/;
@@ -68,6 +72,13 @@ interface OutSection {
 
 const unitVma = (u: OutUnit): number => (u.kind === 'group' ? u.group.vma : u.fill.vma);
 const unitSize = (u: OutUnit): number => (u.kind === 'group' ? u.group.size : u.fill.size);
+/**
+ * Carrying symbol lines marks the real placement: when ld re-prints pre-merge
+ * snapshots they come without their symbols, so among same-VMA candidates the
+ * symbol-bearing unit is the one to keep — regardless of whether the stale
+ * re-print sits before or after it in the file.
+ */
+const bearingSymbols = (u: OutUnit): boolean => u.kind === 'group' && u.group.symbols.length > 0;
 
 const enum State {
     Seek,
@@ -154,6 +165,10 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     let group: Contribution | null = null;
     let discardedPendingName: string | null = null;
     let outSec: OutSection | null = null;
+    // Output sections whose tiling search blew the visit budget fall back to
+    // keep-all — the pre-tiling double-count behavior. Surfaced once at the
+    // end so the regression is observable without flooding per-section.
+    let budgetFallbacks = 0;
 
     const emitGroup = (g: Contribution): void => {
         const sizes = allocateSizes(g, warnings);
@@ -251,13 +266,20 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 const s = unitSize(u);
                 return v >= start && v + s <= end;
             })
-            .sort((a, b) => unitVma(a.u) - unitVma(b.u) || a.idx - b.idx);
+            .sort(
+                (a, b) =>
+                    unitVma(a.u) - unitVma(b.u) ||
+                    Number(bearingSymbols(b.u)) - Number(bearingSymbols(a.u)) ||
+                    a.idx - b.idx,
+            );
         const budget = { visits: 20000 };
+        let budgetExhausted = false;
         const search = (cursor: number, from: number, acc: OutUnit[]): OutUnit[] | null => {
             if (cursor === end) {
                 return acc;
             }
             if (budget.visits-- <= 0) {
+                budgetExhausted = true;
                 return null;
             }
             for (let i = from; i < viable.length; i++) {
@@ -276,6 +298,9 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             return null;
         };
         const chain = search(start, 0, []);
+        if (!chain && budgetExhausted) {
+            budgetFallbacks++;
+        }
         for (const u of chain ?? sec.units) {
             if (u.kind === 'group') {
                 emitGroup(u.group);
@@ -520,6 +545,21 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     break;
                 }
 
+                // Second line of a two-line output header in its bare-extent
+                // form: `<vma> <size>` with no `load address` (`._user_heap_stack`
+                // prints this shape; `.tm_clone_table` prints the load-address
+                // form handled above). Without capturing it the section extent
+                // stays unknown and tiling silently falls back to keep-all.
+                if (outSec && outSec.vma == null && outSec.name !== '/DISCARD/') {
+                    const bareExtent = /^\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s*$/.exec(line);
+                    if (bareExtent) {
+                        outSec.vma = parseInt(bareExtent[1], 16);
+                        outSec.size = parseInt(bareExtent[2], 16);
+                        pendingSection = null;
+                        break;
+                    }
+                }
+
                 const symbol = SYMBOL_RE.exec(line);
                 if (symbol) {
                     const name = symbol[2];
@@ -556,6 +596,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     // to their surrounding output section header.
     for (const fill of looseFills) {
         emitFill(fill);
+    }
+
+    if (budgetFallbacks > 0) {
+        warnings.add(
+            `tiling budget exhausted in ${budgetFallbacks} output section(s) — kept all candidate lines (possible double count)`,
+        );
     }
 
     // Rows whose name came from a section often embed the mangled symbol

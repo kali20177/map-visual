@@ -101,10 +101,11 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | `LOAD /path` | 跳过 | |
 | 无点自定义段名贡献行（` shellCommand  <vma> <size> <obj>`） | 正常贡献组，kind=other | `__attribute__((section("shellCommand")))` 等脚本 `*(名字)` 收集的自定义段——段名 token 不以 `.` 开头 |
 | 合并/relax 历史快照行 | 剔除 | LTO+字符串合并下 ld 会重打印已合并输入段的 pre-merge 大小（同 VMA、旧尺寸，无占位）——解析器按"输出段内贡献+fill 恰好铺满 [vma, vma+size)"链式取舍，非链上行丢弃 |
-| 两行式输出段头（col0 裸段名 + 次行 `load address`） | 段级 extent，不产生贡献 | NOLOAD/纯脚本段（`._user_heap_stack`、`.tm_clone_table`）的打印形态；其次行的 load address 不是真实载像，段内 fill 只占 RAM |
+| 两行式输出段头（col0 裸段名 + 次行 extent） | 段级 extent，不产生贡献 | NOLOAD/纯脚本段的两种次行形态：`load address 0x…`（`.tm_clone_table`，size 0）与纯 `0x<vma> 0x<size>` 两字段（`._user_heap_stack` 实际打印形态）；其次行的 load address 不是真实载像，段内 fill 只占 RAM |
+| Memory Configuration 区域降级 | region role → `other`，区域内符号 `storage=[]` | 区域 kept 内容全为非 alloc 语义（kind `other`/`meta`，如 `(COPY)` 段落位的 `DEVNULL_ROM`、仅自定义段的区域）时不计入 flash/ram；**仅含 fill 的区域不降级**（NOLOAD 堆栈 pad 仍占 RAM——fill 的 kind 继承自所在段，不能证明区域的内容属性）。口径注意：位于 FLASH 的可写自定义段（如 `.fw_signature`）无法按内容与 `(COPY)` 段区分，同样不计入——RAM 真值取 ELF 段级（`.data`+`.bss`+`._user_heap_stack` 之和），`size`(1) 工具会把这类段计入 data 列（其 ram 估计虚高 64 B/段） |
 | `FILL mask 0xff` | 跳过 | 脚本 FILL 回显，无 extent |
 | `.bss` 类段（单行头也带 load address）的 `*fill*` | 只占 RAM | zero-init 无加载镜像；fill 的 lma 归零 |
-| 有载像段（`.data`）内的 `*fill*` | 占 Flash（载像）+ RAM | fill 字节同样存在于 LMA 镜像——size(1) 的 data 列含它 |
+| 有载像段（`.data`）内的 `*fill*` | 占 Flash（载像）+ RAM | fill 字节同样存在于 LMA 镜像——Berkeley `size`(1) 工具的 data 列含它（此处及上文的 `size` 均指该工具，非字段名） |
 
 ### 1.6 输出段分类表（kind 推断）
 
@@ -144,6 +145,12 @@ GNU ld 只给**贡献**（输入段）的总大小，段内多个符号（crt、
 | firmware_common.map | `-fcommon` | ` COMMON <vma> <size> <obj>` 贡献行（无点段名、归 bss）；**golden FLASH 44 / RAM 24** |
 | firmware_cpp_sections.map | `-O0 -ffunction-sections -fdata-sections`（C++） | 符号行位于 mangled 段内（`.text._ZN...`）——mangled 从段名回收；**golden FLASH 120 / RAM 4** |
 | firmware_shellcmd.map | `__attribute__((section("shellCommand")))` + `*(shellCommand)` 收集 | 无点自定义段名贡献行；**golden FLASH 44 / RAM 0** |
+
+**真实工程基准（`test/fixtures/real/`，非 build.sh 产物，重新生成需回源工程构建）：**
+
+| 文件 | 来源 | 覆盖 |
+|---|---|---|
+| stm32f103-rb-demo-boot.map | stm32f103-rb-demo（CMake + Arm GNU Toolchain 13.3）Release/boot，LTO + C++ + 自定义脚本段 | 端到端黄金基准（`test/unit/realmap.test.ts`）：**FLASH 7648 / RAM 6360 与 ELF 段级真值一致**；LTO 合并/relax 快照行、`DEVNULL_ROM`（COPY）区域降级、两行式段头纯 extent 形态、无点 `shellCommand` 贡献行；kept 非 meta 行 VMA 零重叠零空隙 |
 
 **lld（`test/fixtures/lld/`）：** build.sh 提供 `ld.lld -Map` 生成脚本（armv7m freestanding）；本机 lld 就绪后执行回填，解析器先以官方表格格式合成基准验证。
 
