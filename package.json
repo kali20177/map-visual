@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "mapvisual",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kali20177/map-visual.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
