@@ -71,3 +71,19 @@ describe('geometric invariant — per-output-section zero overlap, zero gaps (wh
         });
     }
 });
+
+describe('warning invariants — no tiling/extent/role-conflict noise on the corpus', () => {
+    // 复审四轮建议动作 5：这三类告警在现有语料上的基线是 0，靠人工扫容易漏
+    it('every fixture stays clean of fallback and role-swap warnings', async () => {
+        for (const rel of fixtureMaps()) {
+            const doc = await parseFixture(rel);
+            const noise = doc.warnings.filter(
+                (w) =>
+                    w.message.includes('tiling search failed') ||
+                    w.message.includes('extent unknown') ||
+                    w.message.includes('may be swapped'),
+            );
+            expect(noise).toEqual([]);
+        }
+    });
+});

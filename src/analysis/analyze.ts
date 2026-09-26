@@ -164,12 +164,14 @@ const RAM_CONFLICT_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|data)/i;
  * deliberately name-blind, but it only has single-sided evidence — when its
  * verdict contradicts a strong RAM/flash name the roles are probably swapped
  * wholesale (i.MX RT style code-in-RAM layouts) and the user gets no signal.
+ * Names carrying both word families (FLASH_DATA, ROM_DATA, ...) are
+ * ambiguous by themselves — trust the anchor there.
  */
 function warnRegionRoleConflicts(regions: MemoryRegion[], warnings: Warnings): void {
     for (const r of regions) {
-        if (r.role === 'flash' && RAM_CONFLICT_RE.test(r.name)) {
+        if (r.role === 'flash' && RAM_CONFLICT_RE.test(r.name) && !FLASH_CONFLICT_RE.test(r.name)) {
             warnings.add(`region "${r.name}" holds executable content but its name suggests RAM — flash/ram roles may be swapped`);
-        } else if (r.role === 'ram' && FLASH_CONFLICT_RE.test(r.name)) {
+        } else if (r.role === 'ram' && FLASH_CONFLICT_RE.test(r.name) && !RAM_CONFLICT_RE.test(r.name)) {
             warnings.add(`region "${r.name}" holds zero-init content but its name suggests flash — flash/ram roles may be swapped`);
         }
     }

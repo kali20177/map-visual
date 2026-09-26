@@ -137,7 +137,11 @@ export function allocateSizes(group: Contribution, warnings: Warnings): Allocati
         return { sizes: [Math.min(size, group.size)], prefixPad };
     }
     const order = syms.map((_, i) => i).sort((a, b) => syms[a].addr - syms[b].addr);
-    const prefixPad = Math.max(0, syms[order[0]].addr - group.vma);
+    // Same clamp as the single-symbol branch: a first symbol beyond the
+    // contribution end must not push the *unsym* row past it either
+    // (review N3, REVIEW-dc30888). The data is contradictory anyway and the
+    // sum check below still fires.
+    const prefixPad = Math.min(group.size, Math.max(0, syms[order[0]].addr - group.vma));
     const sortedSizes: number[] = [];
     for (let k = 0; k < n - 1; k++) {
         const delta = syms[order[k + 1]].addr - syms[order[k]].addr;
@@ -195,6 +199,9 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     // (non-alloc) are exempt, see resolveOutSec.
     let tilingFallbacks = 0;
     let budgetFailures = 0;
+    // Output sections whose extent never became known (bare header, missing
+    // extent line) — keep-all without ever running the search.
+    let extentFallbacks = 0;
 
     const emitGroup = (g: Contribution, outSection: string | null): void => {
         const { sizes, prefixPad } = allocateSizes(g, warnings);
@@ -314,7 +321,25 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             }
             return;
         }
-        if (sec.vma == null || sec.size == null || sec.size === 0) {
+        if (sec.vma == null || sec.size == null) {
+            // Extent unknown — the tiling chain has nothing to compare
+            // against, so keep-all is the only option. Say so anyway: stale
+            // duplicate rows at the same address would otherwise count
+            // silently (review N2, REVIEW-dc30888).
+            if (sec.units.length > 0) {
+                extentFallbacks++;
+            }
+            for (const u of sec.units) {
+                if (u.kind === 'group') {
+                    emitGroup(u.group, sec.name);
+                } else {
+                    emitFill(u.fill, sec.name);
+                }
+            }
+            return;
+        }
+        if (sec.size === 0) {
+            // Empty section — nothing to tile, nothing to warn about.
             for (const u of sec.units) {
                 if (u.kind === 'group') {
                     emitGroup(u.group, sec.name);
@@ -698,6 +723,11 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             msg += `; visit budget exhausted in ${budgetFailures} of them`;
         }
         warnings.add(msg);
+    }
+    if (extentFallbacks > 0) {
+        warnings.add(
+            `output extent unknown for ${extentFallbacks} output section(s) — kept all candidate lines without tiling (possible double count)`,
+        );
     }
 
     // Rows whose name came from a section often embed the mangled symbol

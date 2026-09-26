@@ -78,6 +78,31 @@ describe('region role conflict warnings (review P5, REVIEW-26a5b23)', () => {
         expect(conflict[0].message).toContain('OCRAM');
     });
 
+    it('trusts the anchor when the region name carries both word families (FLASH_DATA)', async () => {
+        // 复审四轮 N1（REVIEW-dc30888）：FLASH_DATA / ROM_DATA 命名本身
+        // 已表明 flash 意图，不应因含 `data` 词根而误报
+        const text = [
+            'Memory Configuration',
+            '',
+            'Name             Origin             Length             Attributes',
+            'FLASH_DATA       0x60000000 0x00400000 xr',
+            'RAM              0x20200000 0x00080000 xrw',
+            '',
+            'Linker script and memory map',
+            '',
+            '.text            0x60000000       0x10',
+            ' .text           0x60000000       0x10 code.o',
+            '                0x60000000                normal_func',
+            '.bss             0x20200000       0x10',
+            ' .bss            0x20200000       0x10 vars.o',
+            '                0x20200000                my_var',
+        ].join('\n');
+        const doc = await parseMapText(text, 'synthetic', { demangle: false, formatOverride: 'gnu-ld' }, undefined);
+        expect(doc.warnings).toEqual([]);
+        const roles = Object.fromEntries(doc.regions.map((r) => [r.name, r.role]));
+        expect(roles).toEqual({ FLASH_DATA: 'flash', RAM: 'ram' });
+    });
+
     it('stays silent for conventional FLASH/RAM layouts', async () => {
         const doc = await parseFixture('real/stm32f103-rb-demo-boot.map');
         expect(doc.warnings).toEqual([]);

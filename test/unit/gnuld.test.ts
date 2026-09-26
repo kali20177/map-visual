@@ -766,6 +766,45 @@ describe('GNU ld — geometry regressions (review P1/P2, REVIEW-26a5b23)', () =>
         expect(w.list()).toEqual([]);
     });
 
+    it('warns when the section extent is unknown instead of silently keep-all (review N2)', () => {
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text',
+                ' .text           0x08000000       0x10 a.o',
+                '                0x08000000                main',
+                ' .text           0x08000000       0x10 b.o',
+                '                0x08000000                other',
+            ].join('\n'),
+            w,
+        );
+        // 裸名段头的 extent 行缺失：无从 tiling，只能 keep-all，但必须出声
+        expect(symbols).toHaveLength(2);
+        expect(w.list()).toHaveLength(1);
+        expect(w.list()[0]!.message).toContain('extent unknown');
+    });
+
+    it('clamps the multi-symbol prefixPad so *unsym* cannot leave the contribution (review N3)', () => {
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                ' .text           0x08000000       0x10 a.o',
+                '                0x08000020                sym_a',
+                '                0x08000024                sym_b',
+            ].join('\n'),
+            w,
+        );
+        const pad = symbols.find((x) => x.name === '*unsym*')!;
+        expect(pad.size).toBe(0x10);
+        expect(pad.addr + pad.size).toBe(0x08000010);
+        // 数据自相矛盾：sum 校验仍要出声
+        expect(w.list()[0]!.message).toContain('do not sum');
+    });
+
     it('warns when an alloc section cannot tile exactly even though the budget is intact', () => {
         const w = new Warnings();
         const { symbols } = parseGnuLd(
