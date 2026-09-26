@@ -32,13 +32,29 @@ module.exports = {
       to: { path: '^src/(parser/|demangle/|analysis/)' },
     },
     {
+      name: 'cli-no-webview',
+      severity: 'error',
+      comment:
+        'CLI 隔离：cli/cliApp 复用 worker 树核心（parser/analysis/demangle），不得拖入 webview 浏览器代码。',
+      from: { path: '^src/(cli\\.ts|cliApp\\.ts)' },
+      to: { path: '^src/webview/' },
+    },
+    {
+      name: 'cli-no-host',
+      severity: 'error',
+      comment:
+        'CLI 隔离：不得引用扩展宿主——宿主文件 import vscode，会间接把 vscode 拉进 CLI bundle。',
+      from: { path: '^src/(cli\\.ts|cliApp\\.ts)' },
+      to: { path: '^src/(extension\\.ts|mapEditor\\.ts|workerClient\\.ts)' },
+    },
+    {
       name: 'no-orphans',
       severity: 'warn',
       comment:
-        '孤儿模块：没有任何模块依赖它。例外：三个运行时入口（extension/worker/webview main）由 esbuild 物理引入，ambient 声明文件不算。',
+        '孤儿模块：没有任何模块依赖它。例外：四个运行时入口（extension/worker/webview main/cli）由 esbuild 物理引入，ambient 声明文件不算。',
       from: {
         orphan: true,
-        pathNot: '^src/(extension\\.ts|worker\\.ts|webview/main\\.ts|types-gecko\\.d\\.ts)$',
+        pathNot: '^src/(extension\\.ts|worker\\.ts|webview/main\\.ts|cli\\.ts|types-gecko\\.d\\.ts)$',
       },
       to: {},
     },

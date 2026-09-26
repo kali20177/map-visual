@@ -27,6 +27,9 @@
     "lld"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "mapvisual": "./dist/cli.js"
+  },
   "contributes": {
     "commands": [
       {

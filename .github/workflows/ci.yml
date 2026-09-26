@@ -34,6 +34,18 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # 打包出的 dist/cli.js 直接喂真实黄金基准，断言 ELF 段级真值
+      - name: CLI smoke
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js summary test/fixtures/real/stm32f103-rb-demo-boot.map | node -e "
+            let s = '';
+            process.stdin.on('data', (d) => (s += d)).on('end', () => {
+              const j = JSON.parse(s);
+              if (j.tool !== 'mapvisual' || j.totals.flash !== 7648 || j.totals.ram !== 6360) process.exit(1);
+              console.log('CLI smoke ok: flash', j.totals.flash, '/ ram', j.totals.ram);
+            });"
+
       # 仅 main 分支推送时打包 vsix 并上传为构建产物（vsce 从 origin 自动识别 GitHub 仓库）
       - name: Package VSIX
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

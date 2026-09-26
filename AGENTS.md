@@ -5,7 +5,7 @@ VSCode 插件 **MapVisual**：嵌入式链接器 map 文件可视化（列表/ T
 ## 常用命令
 
 ```bash
-npm run compile        # esbuild 三入口：dist/extension.js + worker.js + webview.js + diff.js（并拷贝 wasm）
+npm run compile        # esbuild 五入口：dist/extension.js + worker.js + webview.js + diff.js + cli.js（并拷贝 wasm）
 npm run typecheck      # tsc --noEmit（strict + noUnusedLocals）
 npm run lint           # ESLint（flat config：eslint.config.mjs）
 npm run check:coupling # dependency-cruiser 架构规则
@@ -13,26 +13,28 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 113 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 134 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 ## 目录
 
 - `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）
-- `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/`、`src/worker.ts` — worker 运行时，纯 Node，禁止 vscode
+- `src/worker.ts` 与 `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/` — worker 运行时，纯 Node，禁止 vscode
+- `src/cli.ts` `src/cliApp.ts` — CLI 运行时（M6，第四入口，独立进程直接调 parser/analysis，不经 worker_threads）：逻辑在 cliApp 的 `runCli` 纯函数（可测、可被未来 MCP 复用），cli.ts 只做进程接线；同受禁 vscode 约束，且禁止引用宿主与 webview（depcruise cli-no-host / cli-no-webview）
 - `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块
 - `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）
 - `test/unit/` — vitest；`test/fixtures/` — 22 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、lld/、real/（外部真实工程黄金基准：rb-demo + zephyr，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
-- `docs/` — DESIGN（§13 实现偏差必读）、FORMATS（map 格式圣经）、RESEARCH
+- `docs/` — DESIGN（§13 实现偏差必读）、FORMATS（map 格式圣经）、RESEARCH、CLI（M6 命令行通道的设计契约）
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）
 
-- 三个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议
+- 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 禁止引用宿主与 webview**（cli-no-host / cli-no-webview）
 - webview 本地依赖白名单：仅 `types.ts` / `protocol.ts` / `webview/` 内部
 - 修改边界规则本身要同步 eslint.config.mjs 与 .dependency-cruiser.cjs 两处，并用"故意违规"验证规则真的会触发
 
 ## 关键坑（踩过的）
 
 - **package.json 不能加 `"type": "module"`**：dist/worker.js 是 CJS bundle，加了会被 Node 当 ESM 加载直接崩（wasm glue 内部用 require）
+- **esbuild 会把 `import.meta` 替换成空对象**（CJS 输出）：dist/cli.js 里解析包版本号只能由 cli.ts 用 `createRequire(__filename)` 注入 `CliEnv.version`；vitest 下是真 ESM 不受影响
 - demangler：绕过 gecko-profiler-demangle 默认入口，`import 'gecko-profiler-demangle/index_bg.js'` + 自行 `WebAssembly.instantiate(bytes, { './index_bg.js': bg })` + `__wbg_set_wasm`；wasm 由 build.mjs 拷到 dist/，worker 用 `__dirname` 定位
 - GNU ld map：relax 注释是独立无地址行；脚本赋值带地址会伪装符号行；`.bss` 段头也有 load address，区域占用必须按 storage 过滤；符号尺寸靠贡献段内地址差分摊（组键含地址，见 docs/FORMATS.md §1.4）；LTO 合并段会重打印 pre-merge 历史快照行（按"输出段内贡献+fill 铺满段 size"取舍）；无点自定义段名（`section("shellCommand")`）与两行式 NOLOAD 段头（col0 裸名 + load address 行）都要识别
 - lld map：整表有前导缩进，行类型靠 Align 列后空格数判别（output=1、child≥2）；尺寸是无前缀十六进制（`12` = 18）

@@ -32,6 +32,17 @@ const configs = [
     ...common,
   },
   {
+    // CLI (M6, docs/CLI.md) — CJS pure Node; shebang must be physically first
+    // for the npm bin shim to execute it
+    entryPoints: ['src/cli.ts'],
+    outfile: 'dist/cli.js',
+    format: 'cjs',
+    platform: 'node',
+    target: 'node18',
+    banner: { js: '#!/usr/bin/env node' },
+    ...common,
+  },
+  {
     // Webview app (IIFE for the sandboxed webview)
     entryPoints: ['src/webview/main.ts'],
     outfile: 'dist/webview.js',

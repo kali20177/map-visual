@@ -9,13 +9,13 @@ export default tseslint.config(
   // unused 由 tsc noUnusedLocals/noUnusedParameters 在编译期报错，不重复检查
   { rules: { '@typescript-eslint/no-unused-vars': 'off' } },
 
-  // ── 运行时边界（三个 bundle 的物理隔离，esbuild 打包前拦截）──
+  // ── 运行时边界（四个 bundle 的物理隔离，esbuild 打包前拦截）──
   //
-  // worker.ts/parser/demangle/analysis 跑在 worker_threads 里：import vscode
-  // 会被打进 worker bundle，Worker 启动即崩；且 tsc 查不出（@types/vscode
-  // 使 vscode 可解析），必须在 lint 层拦截。
+  // worker.ts（worker_threads）、cli.ts（独立 CLI 进程）及 parser/demangle/analysis
+  // 跑在纯 Node 运行时：import vscode 会被打进对应 bundle，启动即崩；且 tsc 查不出
+  // （@types/vscode 使 vscode 可解析），必须在 lint 层拦截。
   {
-    files: ['src/worker.ts', 'src/parser/**', 'src/demangle/**', 'src/analysis/**'],
+    files: ['src/worker.ts', 'src/cli.ts', 'src/cliApp.ts', 'src/parser/**', 'src/demangle/**', 'src/analysis/**'],
     rules: {
       'no-restricted-imports': [
         'error',
