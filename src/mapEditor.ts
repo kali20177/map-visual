@@ -29,6 +29,8 @@ interface PanelState {
     reparse: () => Promise<void>;
     /** Split view is on for this panel (raw map text pane beside it). */
     splitOn: boolean;
+    /** View column of the raw text pane this panel opened/adopted — closing targets it only. */
+    rawColumn?: vscode.ViewColumn;
 }
 
 export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<MapCustomDocument> {
@@ -62,14 +64,17 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         });
         // If the user closes the raw text pane by hand, flip the panel's split
         // toggle off so the webview button stays truthful.
-        vscode.window.tabGroups.onDidChangeTabs(() => {
-            for (const [panel, state] of this.panels) {
-                if (state.splitOn && !this.visibleRawEditor(state.uri)) {
-                    state.splitOn = false;
-                    void panel.webview.postMessage({ type: 'splitChanged', on: false });
+        this.context.subscriptions.push(
+            this.rawLineDecor,
+            vscode.window.tabGroups.onDidChangeTabs(() => {
+                for (const [panel, state] of this.panels) {
+                    if (state.splitOn && !this.visibleRawEditor(state.uri)) {
+                        state.splitOn = false;
+                        void panel.webview.postMessage({ type: 'splitChanged', on: false });
+                    }
                 }
-            }
-        });
+            }),
+        );
     }
 
     openCustomDocument(uri: vscode.Uri): MapCustomDocument {
@@ -272,8 +277,12 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
      * `vscode.open` would respect the .map custom-editor default, so this goes
      * through showTextDocument (typed to return a TextEditor), with an explicit
      * openWith 'default' as the fallback for exotic editor associations.
+     * Returns undefined (with a user-facing error) when even that fails — e.g.
+     * the file is associated with a `priority: "exclusive"` editor: the second
+     * showTextDocument would resolve through the same exclusive-only path and
+     * throw again, so verify the pane actually appeared instead.
      */
-    private async openRawEditor(uri: vscode.Uri): Promise<vscode.TextEditor> {
+    private async openRawEditor(uri: vscode.Uri): Promise<vscode.TextEditor | undefined> {
         const existing = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
         if (existing) {
             return existing;
@@ -282,7 +291,14 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             return await vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
         } catch {
             await vscode.commands.executeCommand('vscode.openWith', uri, 'default', vscode.ViewColumn.Beside);
-            return vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+            const forced = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
+            if (!forced) {
+                void vscode.window.showErrorMessage(
+                    `MapVisual: could not open "${path.basename(uri.fsPath)}" as text — check its editor association ("Open With…")`,
+                );
+                return undefined;
+            }
+            return forced;
         }
     }
 
@@ -293,20 +309,49 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             return;
         }
         if (state.splitOn) {
-            // flip first so the tabs listener does not double-post splitChanged
-            state.splitOn = false;
-            const tabs = vscode.window.tabGroups.all
-                .flatMap((g) => g.tabs)
-                .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === uri.toString());
-            if (tabs.length > 0) {
-                await vscode.window.tabGroups.close(tabs);
-            }
-            void panel.webview.postMessage({ type: 'splitChanged', on: false });
+            await this.closeRawPane(panel, state, uri);
             return;
         }
-        await this.openRawEditor(uri);
+        const editor = await this.openRawEditor(uri);
+        if (!editor) {
+            return;
+        }
+        state.rawColumn = editor.viewColumn ?? state.rawColumn;
         state.splitOn = true;
         void panel.webview.postMessage({ type: 'splitChanged', on: true });
+    }
+
+    /**
+     * Close only the raw pane this feature opened/adopted (bound column first,
+     * following it if the user moved it to another group) — a same-file text
+     * tab the user opened for their own purposes must survive. A dirty-tab
+     * confirmation can cancel the close, so only drop the split state when the
+     * pane is really gone.
+     */
+    private async closeRawPane(panel: vscode.WebviewPanel, state: PanelState, uri: vscode.Uri): Promise<void> {
+        let tabs = this.rawTabsFor(uri, state.rawColumn);
+        if (tabs.length === 0) {
+            tabs = this.rawTabsFor(uri, undefined).slice(0, 1);
+        }
+        const closed = tabs.length === 0 || (await vscode.window.tabGroups.close(tabs));
+        if (closed && state.splitOn) {
+            state.splitOn = false;
+            void panel.webview.postMessage({ type: 'splitChanged', on: false });
+        } else if (!closed) {
+            // the tab is still there (confirmation cancelled) — re-sync the truth
+            void panel.webview.postMessage({ type: 'splitChanged', on: state.splitOn });
+        }
+    }
+
+    private rawTabsFor(uri: vscode.Uri, column: vscode.ViewColumn | undefined): vscode.Tab[] {
+        return vscode.window.tabGroups.all
+            .flatMap((g) => g.tabs)
+            .filter(
+                (t) =>
+                    t.input instanceof vscode.TabInputText &&
+                    t.input.uri.toString() === uri.toString() &&
+                    (column === undefined || t.group.viewColumn === column),
+            );
     }
 
     /**
@@ -320,6 +365,16 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             return;
         }
         const editor = await this.openRawEditor(uri);
+        if (!editor) {
+            return;
+        }
+        state.rawColumn = editor.viewColumn ?? state.rawColumn;
+        // opening the pane IS entering split mode — sync before any early
+        // return below so the button never lies about a visible pane
+        if (!state.splitOn) {
+            state.splitOn = true;
+            void panel.webview.postMessage({ type: 'splitChanged', on: true });
+        }
         if (editor.document.uri.toString() !== uri.toString()) {
             void panel.webview.postMessage({ type: 'rawLineMissing' });
             return;
@@ -330,15 +385,16 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             void panel.webview.postMessage({ type: 'rawLineMissing' });
             return;
         }
-        if (!state.splitOn) {
-            state.splitOn = true;
-            void panel.webview.postMessage({ type: 'splitChanged', on: true });
-        }
         const zero = line - 1;
         const docLine = editor.document.lineAt(zero);
-        // highlight the symbol's own span when the name is findable in the
-        // line, else fall back to the whole line
+        // highlight the symbol's own span; a line that no longer contains the
+        // name means the file was rewritten with the same line count — refuse
+        // to point at the wrong line (G4, REVIEW-8f2c358)
         const at = name ? docLine.text.indexOf(name) : -1;
+        if (name && at < 0) {
+            void panel.webview.postMessage({ type: 'rawLineMissing' });
+            return;
+        }
         const range = at >= 0 ? new vscode.Range(zero, at, zero, at + name.length) : docLine.range;
         editor.revealRange(docLine.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
         editor.setDecorations(this.rawLineDecor, [range]);

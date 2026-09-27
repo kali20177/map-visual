@@ -666,7 +666,7 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // keyboard access for rows: arrows move focus across the virtualized window,
-// Enter copies/activates, Shift+F10 / ContextMenu opens the row menu
+// Enter reveals the raw map line (same as click), Shift+F10 / ContextMenu opens the row menu
 tbodyEl.addEventListener('keydown', (ev) => {
     if (ev.altKey || ev.ctrlKey || ev.metaKey) {
         return;

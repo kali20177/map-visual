@@ -110,4 +110,21 @@ describe('raw map line invariant — every row points at a real raw line (split-
             }
         }
     });
+
+    // 同一原始行被两个不同名字的记录共享会让"点击定位"产生歧义——解析器
+    // 的行消费是一行一类的，这个不变量钉住该结构性质（REVIEW-8f2c358 §3）
+    it('no raw line is claimed by two different rows', async () => {
+        for (const rel of fixtureMaps()) {
+            const doc = await parseFixture(rel);
+            const byLine = new Map<number, string>();
+            for (const s of doc.symbols) {
+                if (s.line == null) {
+                    continue;
+                }
+                const prev = byLine.get(s.line);
+                expect(prev, `${rel}:${s.line} claimed by "${prev}" and "${s.name}"`).toBeUndefined();
+                byLine.set(s.line, s.name);
+            }
+        }
+    });
 });
