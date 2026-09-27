@@ -106,3 +106,16 @@ describe('lld tabular parser', () => {
         });
     });
 });
+
+describe('lld raw map line capture', () => {
+    it('records 1-based raw lines for symbol and section rows', () => {
+        const w = new Warnings();
+        const { symbols } = parseLld(LLD_MAP, w);
+        // the header line is line 1 of the map text
+        expect(symbols.find((s) => s.name === 'main')!.line).toBe(6);
+        expect(symbols.find((s) => s.name === '_start')!.line).toBe(4);
+        const got = symbols.find((s) => s.name === '.got');
+        expect(got!.fromSectionName).toBe(true);
+        expect(got!.line).toBe(16);
+    });
+});

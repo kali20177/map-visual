@@ -39,6 +39,8 @@ const WILDCARD_ECHO_RE = /^[^\s(]*\([^\s]*\)\s*$/;
 interface PendingSymbol {
     addr: number;
     name: string;
+    /** 1-based raw map line the symbol was printed on. */
+    line: number;
 }
 
 interface Contribution {
@@ -47,6 +49,8 @@ interface Contribution {
     size: number;
     lma: number | null;
     object: string;
+    /** 1-based raw map line carrying the contribution extent. */
+    line: number;
     symbols: PendingSymbol[];
 }
 
@@ -56,6 +60,8 @@ interface FillEntry {
     section: string;
     /** Load address of the surrounding output section (initialized sections only). */
     lma: number | null;
+    /** 1-based raw map line of the `*fill*` entry. */
+    line: number;
 }
 
 type OutUnit = { kind: 'group'; group: Contribution } | { kind: 'fill'; fill: FillEntry };
@@ -192,6 +198,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     let pendingSection: string | null = null;
     let group: Contribution | null = null;
     let discardedPendingName: string | null = null;
+    let discardedPendingLine: number | null = null;
     let outSec: OutSection | null = null;
     // Output sections whose tiling search failed fall back to keep-all — the
     // pre-tiling double-count behavior. Surfaced once at the end so the
@@ -222,6 +229,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 lma: g.lma,
                 status: 'kept',
                 fromSectionName: false,
+                line: sym.line,
             });
         });
         // Unclaimed bytes between the contribution start and its first symbol
@@ -265,6 +273,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 lma: g.lma,
                 status: 'kept',
                 fromSectionName: true,
+                line: g.line,
             });
         }
     };
@@ -283,6 +292,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             status: 'kept',
             isFill: true,
             fromSectionName: false,
+            line: f.line,
         });
     };
 
@@ -415,7 +425,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         resolveOutSec(sec);
     };
 
-    const pushSectionRow = (section: string, vma: number, size: number, objectRaw: string, lma: number | null, status: 'kept' | 'discarded'): void => {
+    const pushSectionRow = (section: string, vma: number, size: number, objectRaw: string, lma: number | null, status: 'kept' | 'discarded', line: number): void => {
         const obj = cleanObjectField(objectRaw);
         const { archive, member } = parseObjectField(obj);
         symbols.push({
@@ -433,6 +443,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             lma,
             status,
             fromSectionName: true,
+            line,
         });
     };
 
@@ -469,19 +480,24 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 }
                 const one = DISCARDED_ONE_LINE_RE.exec(line);
                 if (one && !HEX_ONLY_RE.test(one[1])) {
-                    pushSectionRow(one[1], parseInt(one[2], 16), parseInt(one[3], 16), one[4], null, 'discarded');
+                    pushSectionRow(one[1], parseInt(one[2], 16), parseInt(one[3], 16), one[4], null, 'discarded', lineNo + 1);
                     discardedPendingName = null;
+                    discardedPendingLine = null;
                     break;
                 }
                 const name = DISCARDED_NAME_RE.exec(line);
                 if (name) {
+                    // two-line form: anchor the row at the name line — that is
+                    // where a reader looks for the symbol
                     discardedPendingName = name[1];
+                    discardedPendingLine = lineNo + 1;
                     break;
                 }
                 const cont = DISCARDED_CONT_RE.exec(line);
                 if (cont && discardedPendingName) {
-                    pushSectionRow(discardedPendingName, parseInt(cont[1], 16), parseInt(cont[2], 16), cont[3], null, 'discarded');
+                    pushSectionRow(discardedPendingName, parseInt(cont[1], 16), parseInt(cont[2], 16), cont[3], null, 'discarded', discardedPendingLine ?? lineNo + 1);
                     discardedPendingName = null;
+                    discardedPendingLine = null;
                 }
                 break;
             }
@@ -565,6 +581,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         size: parseInt(fill[2], 16),
                         section: currentSectionHeader,
                         lma: zeroInit ? null : currentLma,
+                        line: lineNo + 1,
                     };
                     if (outSec) {
                         outSec.units.push({ kind: 'fill', fill: entry });
@@ -598,6 +615,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         size: parseInt(contrib[3], 16),
                         lma: currentLma,
                         object: contrib[4],
+                        line: lineNo + 1,
                         symbols: [],
                     };
                     break;
@@ -646,6 +664,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         size: parseInt(continuation[2], 16),
                         lma: currentLma,
                         object: obj,
+                        line: lineNo + 1,
                         symbols: [],
                     };
                     break;
@@ -688,7 +707,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         break;
                     }
                     if (group) {
-                        group.symbols.push({ addr: parseInt(symbol[1], 16), name });
+                        group.symbols.push({ addr: parseInt(symbol[1], 16), name, line: lineNo + 1 });
                     } else {
                         warnings.add('symbol line without a preceding contribution', line.trim(), lineNo + 1);
                     }

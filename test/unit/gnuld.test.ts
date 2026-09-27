@@ -639,7 +639,8 @@ describe('size allocation algorithm (property-ish)', () => {
         size,
         lma: null,
         object: 'a.o',
-        symbols: addrs.map((addr, i) => ({ addr, name: `sym${i}` })),
+        line: 1,
+        symbols: addrs.map((addr, i) => ({ addr, name: `sym${i}`, line: 2 })),
     });
 
     it('single symbol takes the whole contribution', () => {
@@ -826,5 +827,27 @@ describe('GNU ld — geometry regressions (review P1/P2, REVIEW-26a5b23)', () =>
         expect(w.list()[0]!.message).not.toContain('budget');
         // keep-all 兜底保留全部行
         expect(symbols.map((x) => x.name)).toContain('stale_copy');
+    });
+});
+
+describe('raw map line capture (split-mode locate)', () => {
+    it('pins symbol rows to their 1-based raw line', async () => {
+        const doc = await parseFixture('gnuld-x86/basic/test_simple.map');
+        expect(findSym(doc, 'main')!.line).toBe(192);
+    });
+
+    it('pins fill rows to their *fill* line', async () => {
+        const doc = await parseFixture('gnuld-x86/basic/test_complex.map');
+        const fills = doc.symbols.filter((s) => s.isFill);
+        expect(fills.length).toBeGreaterThan(0);
+        expect(fills.some((f) => f.line === 188)).toBe(true);
+    });
+
+    it('pins discarded rows to the line naming them', async () => {
+        const doc = await parseFixture('gnuld-x86/discarded/test_discarded.map');
+        const rows = doc.symbols.filter((s) => s.status === 'discarded');
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((r) => r.line != null)).toBe(true);
+        expect(rows.find((r) => r.name === '.rodata.cst4')!.line).toBe(11);
     });
 });

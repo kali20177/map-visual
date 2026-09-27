@@ -57,6 +57,8 @@ export interface SymbolRecord {
     isSystem: boolean;
     /** Object file is an LTO intermediate (.ltrans*.o / LLVM fat LTO names). */
     isLto: boolean;
+    /** 1-based line in the raw map file this row was parsed from; absent for synthesized rows (`*unsym*` prefix pads). */
+    line?: number;
 }
 
 export interface ParseWarning {

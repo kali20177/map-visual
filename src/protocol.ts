@@ -19,14 +19,18 @@ export type HostToWebview =
     | { type: 'parseError'; error: { kind: string; message: string } }
     | { type: 'parseCancelled' }
     | { type: 'parsing' }
-    | { type: 'diffResult'; diff: DiffResult };
+    | { type: 'diffResult'; diff: DiffResult }
+    | { type: 'splitChanged'; on: boolean }
+    | { type: 'rawLineMissing' };
 
 /** webview → extension host */
 export type WebviewToHost =
     | { type: 'ready' }
     | { type: 'exportCsv'; csv: string; suggestedName: string; file?: string }
     | { type: 'openAsText' }
-    | { type: 'revealSource'; object: string; member: string | null };
+    | { type: 'revealSource'; object: string; member: string | null }
+    | { type: 'toggleSplit' }
+    | { type: 'revealRawLine'; line: number; name: string };
 
 /** Legacy alias kept for the worker entry signature. */
 export type ParseRequest = Extract<HostToWorker, { type: 'parse' }>;

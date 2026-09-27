@@ -79,6 +79,7 @@ root.innerHTML = `
     <button id="mv-system" class="mv-toggle" title="Hide compiler/runtime objects (crt, libgcc, libc…)">System</button>
     <button id="mv-discarded" class="mv-toggle" title="Show sections removed by --gc-sections">Removed</button>
     <button id="mv-view" class="mv-toggle" title="Toggle list / treemap view">Treemap</button>
+    <button id="mv-split" class="mv-toggle" title="Show the raw map file beside this view — click a symbol row to jump to its line">Raw</button>
     <button id="mv-export" class="mv-btn" title="Export the filtered rows as CSV">CSV</button>
   </div>
   <div class="mv-body">
@@ -106,6 +107,7 @@ const demangleEl = $<HTMLButtonElement>('mv-demangle');
 const systemEl = $('mv-system');
 const discardedEl = $('mv-discarded');
 const viewEl = $('mv-view');
+const splitEl = $('mv-split');
 const exportEl = $('mv-export');
 const summaryEl = $('mv-summary');
 const theadEl = $('mv-thead');
@@ -463,6 +465,9 @@ viewEl.addEventListener('click', () => {
     viewEl.classList.toggle('on', state.view === 'treemap');
     renderAll();
 });
+splitEl.addEventListener('click', () => {
+    post({ type: 'toggleSplit' });
+});
 exportEl.addEventListener('click', () => {
     const doc = state.doc;
     if (!doc) {
@@ -524,10 +529,14 @@ tbodyEl.addEventListener('click', (ev) => {
         renderWindow();
         return;
     }
+    // click = locate the row's line in the raw map text (host opens the pane
+    // beside on demand); copying lives in the row context menu
     const sym = entry.row.sym;
-    const alt = ev.altKey;
-    const text = alt ? (sym.mangled ?? sym.name) : entry.row.display;
-    void navigator.clipboard?.writeText(text).then(() => toast(`Copied: ${text.length > 60 ? text.slice(0, 57) + '…' : text}`));
+    if (sym.line == null) {
+        toast('No raw map line for this row');
+        return;
+    }
+    post({ type: 'revealRawLine', line: sym.line, name: sym.name });
 });
 
 // ---- row context menu (M3) ----
@@ -773,6 +782,11 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         }
     } else if (msg.type === 'parsing') {
         footerEl.innerHTML = '<span class="mv-parsing">Parsing…</span>';
+    } else if (msg.type === 'splitChanged') {
+        // host state is the truth (the raw pane may have been closed by hand)
+        splitEl.classList.toggle('on', msg.on);
+    } else if (msg.type === 'rawLineMissing') {
+        toast('Raw line not found — the map file may have changed since parsing');
     }
 });
 

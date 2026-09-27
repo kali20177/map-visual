@@ -33,7 +33,9 @@ interface Contribution {
     lma: number;
     size: number;
     object: string;
-    symbols: { name: string; addr: number; size: number }[];
+    /** 1-based raw map line of the input-section row. */
+    line: number;
+    symbols: { name: string; addr: number; size: number; line: number }[];
 }
 
 function makeRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 'section' | 'object' | 'status' | 'fromSectionName'> {
@@ -81,6 +83,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
                 lma: c.lma,
                 status: 'kept',
                 fromSectionName: true,
+                line: c.line,
             });
         }
         for (const sym of c.symbols) {
@@ -98,6 +101,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
                 lma: c.lma,
                 status: 'kept',
                 fromSectionName: false,
+                line: sym.line,
             });
         }
     };
@@ -139,6 +143,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
                 lma,
                 size,
                 object: input[1],
+                line: lineNo + 1,
                 symbols: [],
             };
             continue;
@@ -146,7 +151,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
 
         // symbol row
         if (current) {
-            current.symbols.push({ name: content, addr: vma, size });
+            current.symbols.push({ name: content, addr: vma, size, line: lineNo + 1 });
         } else {
             warnings.add('symbol row without a preceding input section', line.trim(), lineNo + 1);
         }

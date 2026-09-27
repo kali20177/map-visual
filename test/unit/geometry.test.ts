@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fixtureMaps, parseFixture } from './helpers';
+import { fixtureMaps, parseFixture, readFixture } from './helpers';
 import type { SymbolRecord } from '../../src/types';
 
 /**
@@ -84,6 +84,30 @@ describe('warning invariants — no tiling/extent/role-conflict noise on the cor
                     w.message.includes('may be swapped'),
             );
             expect(noise).toEqual([]);
+        }
+    });
+});
+
+describe('raw map line invariant — every row points at a real raw line (split-mode locate)', () => {
+    // 分栏定位的根基：行内点击要落回原始 map 文件。除解析器合成的
+    // *unsym* 前缀垫行外，每行都必须有 1-based 行号，且符号行命中的原始
+    // 行要真的包含该符号名——否则"点击定位"会指到错误的行。
+    it('records a line for every row, and symbol lines name their symbol', async () => {
+        for (const rel of fixtureMaps()) {
+            const lines = readFixture(rel).split('\n');
+            const doc = await parseFixture(rel);
+            for (const s of doc.symbols) {
+                if (s.line == null) {
+                    expect(s.name, `${rel}: row without a raw line`).toBe('*unsym*');
+                    continue;
+                }
+                const raw = lines[s.line - 1];
+                expect(raw, `${rel}:${s.line} (${s.name}) out of range`).toBeDefined();
+                expect(raw!.length, `${rel}:${s.line} (${s.name}) blank line`).toBeGreaterThan(0);
+                if (!s.fromSectionName && !s.isFill) {
+                    expect(raw!.includes(s.name), `${rel}:${s.line} should name "${s.name}", got: ${raw!.trim().slice(0, 80)}`).toBe(true);
+                }
+            }
         }
     });
 });

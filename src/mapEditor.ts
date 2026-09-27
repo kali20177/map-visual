@@ -27,11 +27,18 @@ interface PanelState {
     uri: vscode.Uri;
     doc: MapDocument | null;
     reparse: () => Promise<void>;
+    /** Split view is on for this panel (raw map text pane beside it). */
+    splitOn: boolean;
 }
 
 export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<MapCustomDocument> {
     private readonly panels = new Map<vscode.WebviewPanel, PanelState>();
     private activePanel: vscode.WebviewPanel | null = null;
+    // "you are here" marker for symbol → raw map line reveals
+    private readonly rawLineDecor = vscode.window.createTextEditorDecorationType({
+        backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+        borderRadius: '3px',
+    });
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -50,6 +57,16 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 // Re-parse in place so panels keep their view state (sort/filter/scroll).
                 for (const state of [...this.panels.values()]) {
                     void state.reparse();
+                }
+            }
+        });
+        // If the user closes the raw text pane by hand, flip the panel's split
+        // toggle off so the webview button stays truthful.
+        vscode.window.tabGroups.onDidChangeTabs(() => {
+            for (const [panel, state] of this.panels) {
+                if (state.splitOn && !this.visibleRawEditor(state.uri)) {
+                    state.splitOn = false;
+                    void panel.webview.postMessage({ type: 'splitChanged', on: false });
                 }
             }
         });
@@ -156,12 +173,15 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             }
         });
 
-        this.panels.set(webviewPanel, { uri: document.uri, doc: null, reparse: parseAndSend });
+        this.panels.set(webviewPanel, { uri: document.uri, doc: null, reparse: parseAndSend, splitOn: false });
 
         webview.onDidReceiveMessage((msg: WebviewToHost) => {
             switch (msg.type) {
                 case 'ready':
                     parseOnce();
+                    // a webview reload re-runs the script with fresh state —
+                    // re-sync the split toggle with the host's panel state
+                    void webview.postMessage({ type: 'splitChanged', on: this.panels.get(webviewPanel)?.splitOn === true });
                     break;
                 case 'exportCsv':
                     void this.exportCsv(msg.csv, msg.suggestedName, msg.file);
@@ -171,6 +191,12 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                     break;
                 case 'revealSource':
                     void this.revealSource(msg.object, msg.member);
+                    break;
+                case 'toggleSplit':
+                    void this.toggleSplit(webviewPanel, document.uri);
+                    break;
+                case 'revealRawLine':
+                    void this.revealRawLine(webviewPanel, document.uri, msg.line, msg.name);
                     break;
                 default:
                     break;
@@ -227,6 +253,95 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             }
         }
         void vscode.window.showInformationMessage(`MapVisual: no source file found for "${member ?? object}" in this workspace`);
+    }
+
+    /** View column of a visible plain-text tab showing `uri`, if any (the map's own custom editor tab does not count). */
+    private visibleRawEditor(uri: vscode.Uri): vscode.ViewColumn | undefined {
+        for (const group of vscode.window.tabGroups.all) {
+            for (const tab of group.tabs) {
+                if (tab.input instanceof vscode.TabInputText && tab.input.uri.toString() === uri.toString()) {
+                    return group.viewColumn;
+                }
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Show the raw map text beside the map panel as a plain text editor.
+     * `vscode.open` would respect the .map custom-editor default, so this goes
+     * through showTextDocument (typed to return a TextEditor), with an explicit
+     * openWith 'default' as the fallback for exotic editor associations.
+     */
+    private async openRawEditor(uri: vscode.Uri): Promise<vscode.TextEditor> {
+        const existing = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
+        if (existing) {
+            return existing;
+        }
+        try {
+            return await vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+        } catch {
+            await vscode.commands.executeCommand('vscode.openWith', uri, 'default', vscode.ViewColumn.Beside);
+            return vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+        }
+    }
+
+    /** Toggle the raw map text pane beside the map view. */
+    private async toggleSplit(panel: vscode.WebviewPanel, uri: vscode.Uri): Promise<void> {
+        const state = this.panels.get(panel);
+        if (!state) {
+            return;
+        }
+        if (state.splitOn) {
+            // flip first so the tabs listener does not double-post splitChanged
+            state.splitOn = false;
+            const tabs = vscode.window.tabGroups.all
+                .flatMap((g) => g.tabs)
+                .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === uri.toString());
+            if (tabs.length > 0) {
+                await vscode.window.tabGroups.close(tabs);
+            }
+            void panel.webview.postMessage({ type: 'splitChanged', on: false });
+            return;
+        }
+        await this.openRawEditor(uri);
+        state.splitOn = true;
+        void panel.webview.postMessage({ type: 'splitChanged', on: true });
+    }
+
+    /**
+     * Locate a symbol row's line in the raw map text. The pane opens beside on
+     * demand (that is the point of the split mode); preserveFocus keeps the
+     * webview focused so rows can be clicked in rapid succession.
+     */
+    private async revealRawLine(panel: vscode.WebviewPanel, uri: vscode.Uri, line: number, name: string): Promise<void> {
+        const state = this.panels.get(panel);
+        if (!state) {
+            return;
+        }
+        const editor = await this.openRawEditor(uri);
+        if (editor.document.uri.toString() !== uri.toString()) {
+            void panel.webview.postMessage({ type: 'rawLineMissing' });
+            return;
+        }
+        if (line < 1 || line > editor.document.lineCount) {
+            // the file changed on disk since the parse — say so instead of
+            // silently revealing a wrong line
+            void panel.webview.postMessage({ type: 'rawLineMissing' });
+            return;
+        }
+        if (!state.splitOn) {
+            state.splitOn = true;
+            void panel.webview.postMessage({ type: 'splitChanged', on: true });
+        }
+        const zero = line - 1;
+        const docLine = editor.document.lineAt(zero);
+        // highlight the symbol's own span when the name is findable in the
+        // line, else fall back to the whole line
+        const at = name ? docLine.text.indexOf(name) : -1;
+        const range = at >= 0 ? new vscode.Range(zero, at, zero, at + name.length) : docLine.range;
+        editor.revealRange(docLine.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        editor.setDecorations(this.rawLineDecor, [range]);
     }
 
     async exportCsv(csv: string, suggestedName: string, mapFile?: string): Promise<void> {
