@@ -1,8 +1,5 @@
 # MapVisual 设计文档
 
-> 状态：设计定稿（v1.0，2026-09-25）；**MVP 已实现**（见文末「实现偏差记录」）。前置阅读：[RESEARCH.md](RESEARCH.md)（竞品调研）、[FORMATS.md](FORMATS.md)（格式规范）。
-> 前作 imgui-gl3-glfw3-base 已验证 GNU ld 解析逻辑并沉淀 13 个 fixture + 17 组 demangle 用例；本项目把它升级为 VSCode 插件形态。
-
 ## 1. 背景与定位
 
 前作用 Dear ImGui 做桌面版 map 分析器，三个硬伤：UI 难看且交互差、C++ demangle 没接入界面、只支持 GNU ld 且部分实现有缺陷。竞品（Map View Embedded 等）同样缺 C++ 支持、只有 treemap 没有精确列表。

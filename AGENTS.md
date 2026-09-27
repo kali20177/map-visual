@@ -13,7 +13,22 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 184 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 190 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+
+调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
+
+## CLI 速查（AI / 脚本通道）
+
+`npm run compile` 后可直接调，解析核心不依赖 VSCode（完整契约见 docs/CLI.md）：
+
+```bash
+node dist/cli.js summary firmware.map                      # 区域占用 + Flash/RAM 总量（JSON）
+node dist/cli.js symbols firmware.map --top 20 --kind code # 符号清单，可过滤/排序
+node dist/cli.js treemap firmware.map --depth 2            # section→object 层级占比
+node dist/cli.js diff old.map new.map                      # 符号级增减 + 总量差值
+```
+
+默认输出 JSON（`--md` 出 Markdown 表格），退出码与错误 kind 对齐。
 
 ## 目录
 
@@ -23,13 +38,14 @@ npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 - `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块
 - `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）
 - `test/unit/` — vitest；`test/fixtures/` — 22 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、lld/、real/（外部真实工程黄金基准：rb-demo + zephyr，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
-- `docs/` — DESIGN（§13 实现偏差必读）、FORMATS（map 格式圣经）、RESEARCH、CLI（M6 命令行通道的设计契约）
+- `docs/` — DESIGN（§13 实现偏差必读）与 CLI（M6 命令行通道的设计契约）入库；FORMATS（map 格式圣经）、RESEARCH（竞品调研：Map View Embedded、linkermapviz、Emma、puncover、bloaty）为本地 AI 参考文档，不入库（与 REVIEW-* 同策略，见 .gitignore）
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）
 
 - 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/diffPanel/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 只准依赖 worker 树核心与 types/protocol**（cli-allowlist 白名单，列表式规则曾漏 diffPanel）
 - webview 本地依赖白名单：仅 `types.ts` / `protocol.ts` / `webview/` 内部
 - 修改边界规则本身要同步 eslint.config.mjs 与 .dependency-cruiser.cjs 两处，并用"故意违规"验证规则真的会触发
+- 禁 vscode 为什么归 ESLint 管：@types/vscode 使 'vscode' 可解析、tsc 查不出这类违规，但打包后 Worker 启动即崩——由 `no-restricted-imports` 拦截；`package.json` 的 `allowScripts` 是 npm≥11 安装脚本白名单（esbuild / simple-git-hooks）
 
 ## 关键坑（踩过的）
 
