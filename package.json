@@ -52,9 +52,19 @@
       {
         "command": "mapvisual.openAsText",
         "title": "MapVisual: Open as Text",
-        "category": "MapVisual"
+        "category": "MapVisual",
+        "icon": "$(file)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mapvisual.openAsText",
+          "group": "navigation",
+          "when": "activeCustomEditorId == 'mapvisual.editor'"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "mapvisual.open",
