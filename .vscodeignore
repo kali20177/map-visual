@@ -1,0 +1,31 @@
+# 发布包只保留运行产物：dist/（js + wasm）、media/、README、LICENSE、package.json
+
+# 源码与构建脚本（运行只需 dist/）
+src/**
+build.mjs
+eslint.config.mjs
+tsconfig.json
+vitest.config.ts
+.dependency-cruiser.cjs
+
+# 测试与内部文档（docs/ 含 REVIEW-*、RESEARCH、FORMATS，均不入库）
+test/**
+docs/**
+AGENTS.md
+CLAUDE.md
+
+# 开发工具配置
+.claude/**
+.vscode/**
+.github/**
+.gitignore
+.zcodeignore
+
+# sourcemap：发布版不带调试信息
+dist/*.map
+
+# worker bundle 已内联 demangler glue，wasm 由 build.mjs 拷入 dist/
+node_modules/**
+
+# 打包产物自身
+*.vsix

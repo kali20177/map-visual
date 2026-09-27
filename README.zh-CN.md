@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="media/icon@2x.png" width="96" alt="MapVisual 图标" />
+<img src="https://github.com/kali20177/map-visual/raw/HEAD/media/icon-2x.png" width="96" alt="MapVisual 图标" />
 
 # MapVisual
 

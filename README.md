@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="media/icon@2x.png" width="96" alt="MapVisual icon" />
+<img src="media/icon-2x.png" width="96" alt="MapVisual icon" />
 
 # MapVisual
 
