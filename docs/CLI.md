@@ -97,7 +97,7 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-
 ```jsonc
 // summary —— totals 即 MapTotals（src/types.ts:60），regions 附 usage 百分比
 {
-  "tool": "mapvisual", "version": "0.1.0", "command": "summary",
+  "tool": "mapvisual", "version": "0.1.1", "command": "summary",
   "file": "firmware.map", "format": "gnu-ld",
   "totals": {
     "flash": 7648, "ram": 6360,

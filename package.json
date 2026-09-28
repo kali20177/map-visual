@@ -2,7 +2,7 @@
   "name": "mapvisual",
   "displayName": "MapVisual",
   "description": "Visualize embedded linker map files (GNU ld / LLVM lld) as a sortable, filterable symbol list with C++ demangling. Flash/RAM usage at a glance.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "mapvisual",
   "icon": "media/icon.png",
   "license": "SEE LICENSE IN LICENSE",
