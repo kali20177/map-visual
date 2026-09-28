@@ -639,7 +639,7 @@ describe('size allocation algorithm (property-ish)', () => {
         size,
         lma: null,
         object: 'a.o',
-        line: 1,
+        sectionLine: 1,
         symbols: addrs.map((addr, i) => ({ addr, name: `sym${i}`, line: 2 })),
     });
 
@@ -849,5 +849,17 @@ describe('raw map line capture (split-mode locate)', () => {
         expect(rows.length).toBeGreaterThan(0);
         expect(rows.every((r) => r.line != null)).toBe(true);
         expect(rows.find((r) => r.name === '.rodata.cst4')!.line).toBe(11);
+    });
+
+    // GNU ld 不给本地符号打符号行：-ffunction-sections 下每个 static/内部函数
+    // （libgcc、LTO 内化后的函数）只剩「裸段头 + 贡献行」两行，段级行的定位
+    // 目标因此必须是印着段名的那一行，而不是只印地址/尺寸/目标文件的贡献行
+    it('pins section-level rows to the line printing the section name', async () => {
+        const doc = await parseFixture('gnuld-arm/firmware_basic.map');
+        const row = doc.symbols.find((s) => s.name === '.text.selfrel_offset31');
+        expect(row!.fromSectionName).toBe(true);
+        expect(row!.line).toBe(57);
+        // 同一段里符号是全局时 ld 照打符号行——那条路径不受影响
+        expect(findSym(doc, '__aeabi_unwind_cpp_pr1')!.line).toBe(118);
     });
 });

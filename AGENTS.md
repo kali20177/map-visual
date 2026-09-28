@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 190 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 191 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
 
@@ -52,7 +52,7 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 - **package.json 不能加 `"type": "module"`**：dist/worker.js 是 CJS bundle，加了会被 Node 当 ESM 加载直接崩（wasm glue 内部用 require）
 - **esbuild 会把 `import.meta` 替换成空对象**（CJS 输出）：dist/cli.js 里解析包版本号只能由 cli.ts 用 `createRequire(__filename)` 注入 `CliEnv.version`；vitest 下是真 ESM 不受影响
 - demangler：绕过 gecko-profiler-demangle 默认入口，`import 'gecko-profiler-demangle/index_bg.js'` + 自行 `WebAssembly.instantiate(bytes, { './index_bg.js': bg })` + `__wbg_set_wasm`；wasm 由 build.mjs 拷到 dist/，worker 用 `__dirname` 定位
-- GNU ld map：relax 注释是独立无地址行；脚本赋值带地址会伪装符号行；`.bss` 段头也有 load address，区域占用必须按 storage 过滤；符号尺寸靠贡献段内地址差分摊（组键含地址，见 docs/FORMATS.md §1.4）；LTO 合并段会重打印 pre-merge 历史快照行（按"输出段内贡献+fill 铺满段 size"取舍）；无点自定义段名（`section("shellCommand")`）与两行式 NOLOAD 段头（col0 裸名 + load address 行）都要识别
+- GNU ld map：relax 注释是独立无地址行；脚本赋值带地址会伪装符号行；`.bss` 段头也有 load address，区域占用必须按 storage 过滤；符号尺寸靠贡献段内地址差分摊（组键含地址，见 docs/FORMATS.md §1.4）；LTO 合并段会重打印 pre-merge 历史快照行（按"输出段内贡献+fill 铺满段 size"取舍）；无点自定义段名（`section("shellCommand")`）与两行式 NOLOAD 段头（col0 裸名 + load address 行）都要识别；**ld 不给本地符号打符号行**——`-ffunction-sections`/LTO 内化/libgcc 等预编译库里的 `static`、匿名命名空间函数只剩「裸子段头 `.text.foo` + 贡献行」，这类贡献成为 `fromSectionName` 段级行，其 `line` 必须锚在印着段名的那一行（贡献行只印地址/尺寸/目标文件，分栏点击靠名字校验）
 - lld map：整表有前导缩进，行类型靠 Align 列后空格数判别（output=1、child≥2）；尺寸是无前缀十六进制（`12` = 18）
 - 新格式（M2 Keil / M4 IAR）走 `src/parser/registry.ts` 的 `registerParser`，契约见该文件注释；不要改 detect/pipeline 的分发逻辑
 

@@ -90,9 +90,12 @@ describe('warning invariants — no tiling/extent/role-conflict noise on the cor
 
 describe('raw map line invariant — every row points at a real raw line (split-mode locate)', () => {
     // 分栏定位的根基：行内点击要落回原始 map 文件。除解析器合成的
-    // *unsym* 前缀垫行外，每行都必须有 1-based 行号，且符号行命中的原始
-    // 行要真的包含该符号名——否则"点击定位"会指到错误的行。
-    it('records a line for every row, and symbol lines name their symbol', async () => {
+    // *unsym* 前缀垫行外，每行都必须有 1-based 行号，且命中的原始行要真的
+    // 包含该行的名字——宿主的 G4 守卫就是这么判的（行内找不到名字即回
+    // rawLineMissing），所以这里不给任何行留豁免：段级行（无符号行的
+    // 贡献，`-ffunction-sections`/LTO/libgcc 里大量存在）也必须指向印着
+    // 段名的段头行，而不是只印地址/尺寸/目标文件的贡献行。
+    it('records a line for every row, and every line names its row', async () => {
         for (const rel of fixtureMaps()) {
             const lines = readFixture(rel).split('\n');
             const doc = await parseFixture(rel);
@@ -104,9 +107,7 @@ describe('raw map line invariant — every row points at a real raw line (split-
                 const raw = lines[s.line - 1];
                 expect(raw, `${rel}:${s.line} (${s.name}) out of range`).toBeDefined();
                 expect(raw!.length, `${rel}:${s.line} (${s.name}) blank line`).toBeGreaterThan(0);
-                if (!s.fromSectionName && !s.isFill) {
-                    expect(raw!.includes(s.name), `${rel}:${s.line} should name "${s.name}", got: ${raw!.trim().slice(0, 80)}`).toBe(true);
-                }
+                expect(raw!.includes(s.name), `${rel}:${s.line} should name "${s.name}", got: ${raw!.trim().slice(0, 80)}`).toBe(true);
             }
         }
     });

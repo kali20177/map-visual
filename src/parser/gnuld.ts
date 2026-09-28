@@ -49,8 +49,16 @@ interface Contribution {
     size: number;
     lma: number | null;
     object: string;
-    /** 1-based raw map line carrying the contribution extent. */
-    line: number;
+    /**
+     * 1-based raw map line that prints this contribution's section name — the
+     * contribution row itself when name and extent share it, the bare child
+     * header (`.text.foo` alone on a line) when ld wrapped them, otherwise the
+     * output-section header. Section-level rows (contributions with no symbol
+     * lines) are located by name, and the extent line never carries it: GNU ld
+     * prints no symbol line for local symbols, so every `static` function
+     * under -ffunction-sections lands here.
+     */
+    sectionLine: number;
     symbols: PendingSymbol[];
 }
 
@@ -195,7 +203,20 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     const looseFills: FillEntry[] = [];
     let currentLma: number | null = null;
     let currentSectionHeader = '';
+    /** 1-based raw map line of the current output-section header (the line that prints its name). */
+    let outputHeaderLine = 0;
     let pendingSection: string | null = null;
+    /**
+     * 1-based raw map line of `pendingSection` (the bare child-section header
+     * `.text.foo` on a line of its own). Name and line only mean anything
+     * together — the pair moves through this one setter so a stale line can
+     * never outlive its name.
+     */
+    let pendingSectionLine: number | null = null;
+    const setPendingSection = (name: string | null, line: number | null = null): void => {
+        pendingSection = name;
+        pendingSectionLine = line;
+    };
     let group: Contribution | null = null;
     let discardedPendingName: string | null = null;
     let discardedPendingLine: number | null = null;
@@ -273,7 +294,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 lma: g.lma,
                 status: 'kept',
                 fromSectionName: true,
-                line: g.line,
+                line: g.sectionLine,
             });
         }
     };
@@ -529,15 +550,17 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         closeOutSec();
                         outSec = { name: header[1], vma: parseInt(header[2], 16), size: parseInt(header[3], 16), units: [] };
                         currentSectionHeader = header[1];
+                        outputHeaderLine = lineNo + 1;
                         currentLma = header[4] ? parseInt(header[4], 16) : null;
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                     if (trimmed === '/DISCARD/') {
                         closeOutSec();
                         outSec = { name: '/DISCARD/', vma: null, size: null, units: [] };
                         currentSectionHeader = '/DISCARD/';
-                        pendingSection = null;
+                        outputHeaderLine = lineNo + 1;
+                        setPendingSection(null);
                         break;
                     }
                     if (trimmed.startsWith('LOAD ') || trimmed.startsWith('OUTPUT(')) {
@@ -547,7 +570,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     if (trimmed.includes(' = ')) {
                         // linker-script assignment at column 0 ends the current group
                         closeGroup();
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                     const bareName = /^([A-Za-z_.][^\s]*)\s*$/.exec(trimmed);
@@ -558,8 +581,9 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         closeOutSec();
                         outSec = { name: bareName[1], vma: null, size: null, units: [] };
                         currentSectionHeader = bareName[1];
+                        outputHeaderLine = lineNo + 1;
                         currentLma = null;
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                     break;
@@ -572,7 +596,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 const fill = FILL_RE.exec(line);
                 if (fill) {
                     closeGroup();
-                    pendingSection = null;
+                    setPendingSection(null);
                     // ld echoes a load address even for zero-init (.bss-style)
                     // sections — their fills never reach the load image
                     const zeroInit = classifySection(currentSectionHeader) === 'bss';
@@ -601,21 +625,23 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 }
                 if (trimmed.startsWith('[!provide]')) {
                     closeGroup();
-                    pendingSection = null;
+                    setPendingSection(null);
                     break;
                 }
 
                 const contrib = CONTRIBUTION_RE.exec(line);
                 if (contrib) {
                     closeGroup();
-                    pendingSection = null;
+                    setPendingSection(null);
                     group = {
                         section: contrib[1],
                         vma: parseInt(contrib[2], 16),
                         size: parseInt(contrib[3], 16),
                         lma: currentLma,
                         object: contrib[4],
-                        line: lineNo + 1,
+                        // name and extent share this line, so it is its own
+                        // locate target for the section-level row
+                        sectionLine: lineNo + 1,
                         symbols: [],
                     };
                     break;
@@ -624,7 +650,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 const sectionName = SECTION_NAME_RE.exec(line);
                 if (sectionName) {
                     closeGroup();
-                    pendingSection = sectionName[1];
+                    setPendingSection(sectionName[1], lineNo + 1);
                     break;
                 }
 
@@ -650,21 +676,28 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                                 }
                             }
                         }
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                     const section = pendingSection ?? (currentSectionHeader || '(unknown)');
                     if (!pendingSection && !currentSectionHeader) {
                         warnings.add('contribution line without a preceding section name', line.trim(), lineNo + 1);
                     }
-                    pendingSection = null;
+                    // Section-level rows are located by name, so they must point
+                    // at a line that prints it: the bare child header when ld
+                    // printed one, else the output-section header. Only the
+                    // extent line is left without a name (GNU ld prints no
+                    // symbol line for local symbols — one per `static` function
+                    // under -ffunction-sections).
+                    const sectionLine = (pendingSection ? pendingSectionLine : outputHeaderLine) || lineNo + 1;
+                    setPendingSection(null);
                     group = {
                         section,
                         vma: parseInt(continuation[1], 16),
                         size: parseInt(continuation[2], 16),
                         lma: currentLma,
                         object: obj,
-                        line: lineNo + 1,
+                        sectionLine,
                         symbols: [],
                     };
                     break;
@@ -680,7 +713,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     if (bareExtent) {
                         outSec.vma = parseInt(bareExtent[1], 16);
                         outSec.size = parseInt(bareExtent[2], 16);
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                 }
@@ -699,7 +732,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     // linker-script assignments echo an address before the expression
                     if (name.includes(' = ')) {
                         closeGroup();
-                        pendingSection = null;
+                        setPendingSection(null);
                         break;
                     }
                     if (HEX_ONLY_RE.test(name)) {
