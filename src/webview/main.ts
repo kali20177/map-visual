@@ -486,13 +486,15 @@ function renderRows(): void {
     // control to remember `clearSelection()` — is what keeps the highlight
     // bound to symbols rather than to positions.
     const signature = rowSetSignature(state.ui, state.collapsed, state.docEpoch);
-    if (state.selected.size > 0 && state.selectionSignature !== signature) {
+    if ((state.selected.size > 0 || state.anchor !== null) && state.selectionSignature !== signature) {
         state.selected.clear();
         state.anchor = null;
     }
     // A restored selection is only meaningful for the document it was taken
     // from: a rebuilt map (different symbol count) would put the highlight on
-    // arbitrary rows, so drop it instead.
+    // arbitrary rows, so drop it instead. Applied *after* the invalidation
+    // check and *before* the signature is recorded, which is what keeps a
+    // restored selection from being cleared by the check that guards it.
     if (state.pendingSelection) {
         const { rows, symbolCount } = state.pendingSelection;
         state.pendingSelection = null;
@@ -1101,10 +1103,12 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
         { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
         { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
         { label: 'Reveal in the raw map', action: () => locateRow(sym) },
-        { label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) },
     ];
+    // both guards keep an empty value from turning the item into "clear the filter"
+    if (objBase) {
+        items.push({ label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) });
+    }
     if (sym.section) {
-        // a row without a section would turn this into "clear the filter"
         items.push({ label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) });
     }
     items.push(
@@ -1302,6 +1306,20 @@ function baseDisplay(p: string): string {
     return slash >= 0 ? p.slice(slash + 1) : p;
 }
 
+/**
+ * Install a parsed document. Assigning the document and bumping the epoch are
+ * one operation on purpose: every index the view holds (row selection, scroll
+ * offset) belongs to a specific document, and a replacement — a rebuild picked
+ * up by the watcher, or a re-parse after a settings change — moves rows around
+ * even when the symbol count happens to match. `rowSetSignature` folds the
+ * epoch in, so this is what makes "a new document invalidates the selection"
+ * structural instead of something each caller has to remember.
+ */
+function setDocument(doc: MapDocument): void {
+    state.doc = doc;
+    state.docEpoch++;
+}
+
 // ---- messages ----
 
 window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
@@ -1313,7 +1331,7 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
             applyRestore(restoreState(msg.state));
         }
     } else if (msg.type === 'parseResult') {
-        state.doc = msg.doc;
+        setDocument(msg.doc);
         state.error = null;
         // bring the shell back if an error page took over (B2), then repaint
         errorHostEl.hidden = true;
