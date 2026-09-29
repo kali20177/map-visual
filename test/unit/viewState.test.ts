@@ -138,9 +138,14 @@ describe('ViewStateStore', () => {
     it('does not rewrite when nothing changed', () => {
         const fake = new FakeStore();
         const store = new ViewStateStore(fake);
-        store.setSplit(URI, false); // default value: no state change
+        store.setSplit(URI, false); // nothing stored yet, and "off" is the default
         store.flush();
         expect(fake.writes).toBe(0);
+        expect(store.get(URI)).toBeUndefined(); // and no dangling in-memory entry
+        store.setSplit(URI, true);
+        store.flush();
+        expect(fake.writes).toBe(1);
+        // re-asserting the same value must not queue another write
         store.setSplit(URI, true);
         store.flush();
         expect(fake.writes).toBe(1);

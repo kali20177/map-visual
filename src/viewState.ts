@@ -58,11 +58,13 @@ export class ViewStateStore {
     }
 
     setSplit(uri: string, splitOn: boolean): void {
-        const entry = this.touch(uri);
-        if (entry.splitOn === splitOn) {
+        const existing = this.entries[uri];
+        // "no entry yet, and off" and "already off" both mean there is nothing
+        // to record — touching first would leave an entry that never flushes
+        if ((!existing && !splitOn) || existing?.splitOn === splitOn) {
             return;
         }
-        entry.splitOn = splitOn;
+        this.touch(uri).splitOn = splitOn;
         this.scheduleFlush();
     }
 

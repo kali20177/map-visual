@@ -45,31 +45,32 @@
   //   MV_STATE_KEY — the webview's own setState/getState (same session only);
   //   MV_HOST_KEY  — the host's per-file workspaceState, which replays on every
   //                  start and therefore survives a "restart".
-  // Both live in sessionStorage because a page variable dies on reload and the
-  // restore paths would never be exercised. Clear MV_STATE_KEY to simulate a
-  // fresh VS Code session while keeping the host's copy.
+  // The webview's copy lives in sessionStorage (dies with the tab, like the
+  // webview) while the host's lives in localStorage (outlives the tab, like the
+  // workspace) — opening a fresh tab is then exactly "new VS Code session, same
+  // workspace", with no race against the page's last write.
   var MV_STATE_KEY = 'mv.webviewState';
   var MV_HOST_KEY = 'mv.hostViewState';
   var MV_FILE = 'harness:/firmware_sections_gc.map';
 
-  function readJson(key) {
+  function readJson(store, key) {
     try {
-      return JSON.parse(sessionStorage.getItem(key) || 'null');
+      return JSON.parse(store.getItem(key) || 'null');
     } catch (e) {
       return null;
     }
   }
 
   function readHost() {
-    var host = readJson(MV_HOST_KEY) || {};
+    var host = readJson(localStorage, MV_HOST_KEY) || {};
     return host[MV_FILE] ? host[MV_FILE].view : null;
   }
 
   function writeHost(state) {
-    var host = readJson(MV_HOST_KEY) || {};
+    var host = readJson(localStorage, MV_HOST_KEY) || {};
     host[MV_FILE] = { view: state, splitOn: false, ts: Date.now() };
     try {
-      sessionStorage.setItem(MV_HOST_KEY, JSON.stringify(host));
+      localStorage.setItem(MV_HOST_KEY, JSON.stringify(host));
     } catch (e) {
       /* ignore */
     }
@@ -78,7 +79,7 @@
   window.acquireVsCodeApi = function () {
     return {
       getState: function () {
-        return readJson(MV_STATE_KEY);
+        return readJson(sessionStorage, MV_STATE_KEY);
       },
       setState: function (state) {
         window.__mvState = state;

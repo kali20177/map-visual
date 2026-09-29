@@ -201,6 +201,36 @@ export function groupKeyOf(sym: SymbolRecord, groupBy: GroupBy): string {
     }
 }
 
+/**
+ * Stable identity of the rendered row list.
+ *
+ * A selection is stored as indices into that list, so it may only outlive the
+ * list while the list itself is unchanged — otherwise the highlight (and a CSV
+ * export of the selection) silently lands on different symbols. Everything the
+ * row list is derived from belongs in here: the whole `UiState`, the collapsed
+ * group keys, and a per-parse epoch (`state.doc` is not in this module).
+ *
+ * The fields are read off the object rather than listed by hand, so a new
+ * `UiState` field is covered the moment it is added — the invariant is
+ * structural instead of a rule every new control has to remember. Keys are
+ * sorted because `JSON.stringify` follows insertion order.
+ */
+export function rowSetSignature(ui: UiState, collapsed: Iterable<string>, docEpoch: number): string {
+    return JSON.stringify([canonical(ui), [...collapsed].sort(), docEpoch]);
+}
+
+/** Recursively sort object keys so a signature never depends on key order. */
+function canonical(value: unknown): unknown {
+    if (value == null || typeof value !== 'object') {
+        return value;
+    }
+    return Object.fromEntries(
+        Object.entries(value)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([k, v]) => [k, canonical(v)]),
+    );
+}
+
 export function buildView(doc: MapDocument, ui: UiState): ListItem[] {
     const rows = filterAndSort(doc, ui);
     if (ui.groupBy === 'none') {

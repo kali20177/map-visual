@@ -111,9 +111,19 @@ export const EMPTY_KIND_TOTALS = (): Record<SymbolKind, number> => ({
 //   2. host `workspaceState` — survives closing the file and restarting
 //      VS Code, per map file.
 
-export type SortKey = 'size' | 'name' | 'addr' | 'section' | 'object' | 'kind';
+/**
+ * Single source of truth for the view dimensions: exported as arrays (not just
+ * unions) so stored blobs are validated against the same list the UI renders
+ * from — a hand-copied duplicate silently falls back to defaults when a
+ * dimension is added.
+ */
+export const SORT_KEYS = ['size', 'name', 'addr', 'section', 'object', 'kind'] as const;
 
-export type GroupBy = 'none' | 'object' | 'archive' | 'kind' | 'directory' | 'outSection';
+export type SortKey = (typeof SORT_KEYS)[number];
+
+export const GROUP_KEYS = ['none', 'object', 'archive', 'kind', 'directory', 'outSection'] as const;
+
+export type GroupBy = (typeof GROUP_KEYS)[number];
 
 export interface UiState {
     sortKey: SortKey;

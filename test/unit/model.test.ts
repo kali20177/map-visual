@@ -8,6 +8,7 @@ import {
     formatBytes,
     groupKeyOf,
     parseFilterTerms,
+    rowSetSignature,
     toCsv,
     type UiState,
 } from '../../src/webview/model';
@@ -165,6 +166,53 @@ describe('grouping', () => {
         const flatCollapsed = flattenItems(items, new Set(['object:main.cpp.o'])).filter((e) => e.row).length;
         expect(flatAll).toBe(5);
         expect(flatCollapsed).toBe(3);
+    });
+});
+
+describe('rowSetSignature', () => {
+    const base = (): UiState => ({ ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } });
+    const sig = (ui: UiState, collapsed: string[] = [], epoch = 1): string => rowSetSignature(ui, collapsed, epoch);
+
+    // The signature guards the row selection against drifting onto other
+    // symbols, so the failure mode to prevent is "a ui field changed the row
+    // list but not the signature" — this walks every field of the real object.
+    it('changes when any UiState field changes', () => {
+        const start = base();
+        const startSig = sig(start);
+        const fields = Object.keys(start) as Array<keyof UiState>;
+        expect(fields.length).toBeGreaterThan(6); // sanity: the walk is not empty
+        for (const key of fields) {
+            const value = start[key];
+            const mutated = {
+                ...start,
+                [key]:
+                    typeof value === 'object'
+                        ? { ...value, code: !value.code }
+                        : typeof value === 'number'
+                          ? value + 1
+                          : typeof value === 'boolean'
+                            ? !value
+                            : `${value}-different`,
+            } as UiState;
+            expect(sig(mutated), `field "${key}" is not part of the signature`).not.toBe(startSig);
+        }
+    });
+
+    it('changes with the collapsed groups and with a re-parse', () => {
+        expect(sig(base(), ['object:a.o'])).not.toBe(sig(base(), ['object:b.o']));
+        expect(sig(base(), [])).not.toBe(sig(base(), [], 2));
+    });
+
+    it('is stable regardless of key order', () => {
+        const a = base();
+        const reordered: Record<string, unknown> = {};
+        for (const key of Object.keys(a).reverse()) {
+            reordered[key] = (a as unknown as Record<string, unknown>)[key];
+        }
+        expect(sig(reordered as unknown as UiState)).toBe(sig(a));
+        const kindsReordered = { ...a, kinds: Object.fromEntries(Object.entries(a.kinds).reverse()) as UiState['kinds'] };
+        expect(sig(kindsReordered)).toBe(sig(a));
+        expect(sig(base(), ['b', 'a'])).toBe(sig(base(), ['a', 'b']));
     });
 });
 

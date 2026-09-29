@@ -1,5 +1,5 @@
 import type { MapDocument, PersistedViewState, SymbolKind, SymbolRecord } from '../types';
-import { VIEW_STATE_VERSION } from '../types';
+import { GROUP_KEYS, SORT_KEYS, VIEW_STATE_VERSION } from '../types';
 import type { ClickAction, HostToWebview, WebviewToHost } from '../protocol';
 import {
     DEFAULT_UI_STATE,
@@ -10,6 +10,7 @@ import {
     formatBytes,
     groupKeyOf,
     parseFilterTerms,
+    rowSetSignature,
     toCsv,
     type FilterTerms,
     type GroupBy,
@@ -64,6 +65,10 @@ interface AppState {
      */
     pendingScroll: number | null;
     pendingSelection: { rows: number[]; symbolCount: number } | null;
+    /** Bumped on every parse: a new document invalidates indices and scroll. */
+    docEpoch: number;
+    /** Row-set signature the current selection was made under (see `rowSetSignature`). */
+    selectionSignature: string | null;
 }
 
 /** Everything restored from a stored blob, before the document arrives. */
@@ -78,9 +83,6 @@ interface Restore {
     /** Symbol count `selected` was taken from; 0 means "not restorable". */
     symbolCount: number;
 }
-
-const SORT_KEYS: SortKey[] = ['size', 'name', 'addr', 'section', 'object', 'kind'];
-const GROUP_KEYS: GroupBy[] = ['none', 'object', 'archive', 'kind', 'directory', 'outSection'];
 
 function restoreUi(raw: unknown): UiState {
     const fresh: UiState = { ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } };
@@ -180,6 +182,8 @@ const state: AppState = {
     clickAction: 'locate',
     anchor: null,
     cols: saved.cols,
+    docEpoch: 0,
+    selectionSignature: null,
     ...pendingRestore(saved),
 };
 
@@ -286,6 +290,13 @@ function toast(text: string): void {
  *     selection.
  */
 function persist(): void {
+    if (!state.doc) {
+        // Nothing is on screen yet, so there is nothing worth remembering —
+        // and writing here would overwrite the host's copy (selection included)
+        // with the pre-render defaults if the webview dies before the parse
+        // lands.
+        return;
+    }
     const payload: PersistedViewState = {
         v: VIEW_STATE_VERSION,
         ui: state.ui,
@@ -470,6 +481,15 @@ function renderRows(): void {
     if (!doc) {
         return;
     }
+    // A selection is indices into the row list: it survives only while that
+    // list is unchanged. Comparing signatures here — instead of asking every
+    // control to remember `clearSelection()` — is what keeps the highlight
+    // bound to symbols rather than to positions.
+    const signature = rowSetSignature(state.ui, state.collapsed, state.docEpoch);
+    if (state.selected.size > 0 && state.selectionSignature !== signature) {
+        state.selected.clear();
+        state.anchor = null;
+    }
     // A restored selection is only meaningful for the document it was taken
     // from: a rebuilt map (different symbol count) would put the highlight on
     // arbitrary rows, so drop it instead.
@@ -480,14 +500,20 @@ function renderRows(): void {
             state.selected = new Set(rows);
         }
     }
+    state.selectionSignature = signature;
     theadEl.style.display = '';
     const items: ListItem[] = buildView(doc, state.ui);
     visible = flattenItems(items, state.collapsed);
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
-    updateMatchChip(visible.filter((v) => v.row).length);
+    // count matched rows, not painted ones: a collapsed group still matched
+    // (the treemap view counts the same way)
+    updateMatchChip(items.reduce((n, item) => n + (item.kind === 'row' ? 1 : item.rows.length), 0));
     renderWindow();
     if (state.pendingScroll != null) {
+        // constrained by the (re)computed spacer height, which is why this has
+        // to run after the layout above
         tbodyEl.scrollTop = state.pendingScroll;
+        listScrollTop = tbodyEl.scrollTop;
         state.pendingScroll = null;
         renderWindow(); // paint the window at the restored offset
     }
@@ -670,7 +696,12 @@ function showError(err: { kind: string; message: string }): void {
 
 // ---- row actions, selection, filter helpers ----
 
-/** Selection indices point into `visible`, so any re-filter has to drop them. */
+/**
+ * Drop the row selection. Needed only where the row list itself does not
+ * change (Escape, select-all, replaying a stored blob) — every other
+ * invalidation is caught structurally by the row-set signature check in
+ * `renderRows`, so a new control cannot forget it.
+ */
 function clearSelection(): void {
     state.selected.clear();
     state.anchor = null;
@@ -684,7 +715,6 @@ function quoteTerm(value: string): string {
 function setFilter(text: string): void {
     searchEl.value = text;
     state.ui.filterText = text;
-    clearSelection();
     syncSearchChrome();
     scheduleRender();
 }
@@ -700,7 +730,6 @@ function onlyKind(kind: SymbolKind): void {
     for (const k of KIND_ORDER) {
         state.ui.kinds[k] = k === kind;
     }
-    clearSelection();
     renderAll();
 }
 
@@ -806,7 +835,6 @@ function applyRestore(r: Restore): void {
 
 searchEl.addEventListener('input', () => {
     state.ui.filterText = searchEl.value;
-    clearSelection();
     syncSearchChrome();
     scheduleRender();
 });
@@ -816,12 +844,10 @@ searchClearEl.addEventListener('click', () => {
 });
 groupEl.addEventListener('change', () => {
     state.ui.groupBy = groupEl.value as UiState['groupBy'];
-    clearSelection();
     renderAll();
 });
 minSizeEl.addEventListener('change', () => {
     state.ui.minSize = parseInt(minSizeEl.value, 10) || 0;
-    clearSelection();
     renderAll();
 });
 demangleEl.addEventListener('click', () => {
@@ -834,13 +860,11 @@ demangleEl.addEventListener('click', () => {
 });
 systemEl.addEventListener('click', () => {
     state.ui.hideSystem = !state.ui.hideSystem;
-    clearSelection();
     syncToggles();
     renderAll();
 });
 discardedEl.addEventListener('click', () => {
     state.ui.showDiscarded = !state.ui.showDiscarded;
-    clearSelection();
     syncToggles();
     renderAll();
 });
@@ -848,6 +872,10 @@ viewEl.addEventListener('click', () => {
     state.view = state.view === 'list' ? 'treemap' : 'list';
     state.treemapGroupKey = null;
     viewEl.classList.toggle('on', state.view === 'treemap');
+    if (state.view === 'list') {
+        // the treemap view clamped scrollTop to 0 — come back where the user was
+        state.pendingScroll = listScrollTop > 0 ? listScrollTop : null;
+    }
     renderAll();
 });
 splitEl.addEventListener('click', () => {
@@ -941,7 +969,6 @@ theadEl.addEventListener('click', (ev) => {
         state.ui.sortKey = key;
         state.ui.sortDir = key === 'size' ? 'desc' : 'asc';
     }
-    clearSelection();
     renderHeader();
     renderRows();
     renderFooter();
@@ -950,6 +977,13 @@ theadEl.addEventListener('click', (ev) => {
 
 let scrollPersistTimer: number | undefined;
 tbodyEl.addEventListener('scroll', () => {
+    if (state.view !== 'list') {
+        // Switching to the treemap shrinks the spacer, the browser clamps
+        // scrollTop to 0 and fires a scroll event for it: that is not the user
+        // scrolling, so it must not overwrite the remembered position (or paint
+        // list rows into the treemap).
+        return;
+    }
     renderWindow();
     listScrollTop = tbodyEl.scrollTop;
     // the offset is part of the restored view, but a fast scroll must not
@@ -1068,10 +1102,15 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
         { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
         { label: 'Reveal in the raw map', action: () => locateRow(sym) },
         { label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) },
-        { label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) },
+    ];
+    if (sym.section) {
+        // a row without a section would turn this into "clear the filter"
+        items.push({ label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) });
+    }
+    items.push(
         { label: `Show only kind  ${sym.kind}`, action: () => onlyKind(sym.kind) },
         { label: `Exclude object  ${truncateLabel(objBase)}`, action: () => addFilterTerm(`-${quoteTerm(objBase)}`) },
-    ];
+    );
     if (state.selected.size > 0) {
         items.push({
             label: `Export selected rows as CSV (${state.selected.size})`,
@@ -1281,7 +1320,6 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         errorHostEl.replaceChildren();
         shellEl.style.display = '';
         state.demangleAvailable = msg.doc.symbols.some((s) => s.demangled != null);
-        clearSelection();
         fileEl.textContent = baseDisplay(msg.doc.file);
         formatEl.textContent = msg.doc.format;
         syncToggles();
