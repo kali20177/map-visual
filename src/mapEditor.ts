@@ -1,9 +1,10 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { MapDocument } from './types';
-import type { ParseRequest, WebviewToHost } from './protocol';
+import type { ClickAction, ParseRequest, WebviewToHost } from './protocol';
 import { ParseWorkerClient } from './workerClient';
 import { sourceGlobPatterns, rankCandidates } from './sourceMatch';
+import { ViewStateStore } from './viewState';
 
 interface MapCustomDocument extends vscode.CustomDocument {
     uri: vscode.Uri;
@@ -23,6 +24,11 @@ function readSettings(): ParseSettings {
     };
 }
 
+/** View-only preference: shipped to the webview as a `settings` message, never triggers a re-parse. */
+function readClickAction(): ClickAction {
+    return vscode.workspace.getConfiguration('mapvisual').get<ClickAction>('clickAction', 'locate');
+}
+
 interface PanelState {
     uri: vscode.Uri;
     doc: MapDocument | null;
@@ -35,6 +41,7 @@ interface PanelState {
 
 export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<MapCustomDocument> {
     private readonly panels = new Map<vscode.WebviewPanel, PanelState>();
+    private readonly viewStore: ViewStateStore;
     private activePanel: vscode.WebviewPanel | null = null;
     // "you are here" marker for symbol → raw map line reveals
     private readonly rawLineDecor = vscode.window.createTextEditorDecorationType({
@@ -47,6 +54,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         private readonly worker: ParseWorkerClient,
         private readonly statusItem: vscode.StatusBarItem,
     ) {
+        this.viewStore = new ViewStateStore(context.workspaceState);
         // Active-custom-editor tracking without onDidChangeActiveCustomEditor
         // (not in the 1.85 typings): panel activation + text-editor switches
         // together cover "map view focused" vs "anything else focused".
@@ -55,7 +63,13 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             this.updateStatusBar();
         });
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('mapvisual')) {
+            // view-only preferences must not buy a fresh multi-MB parse
+            if (e.affectsConfiguration('mapvisual.clickAction')) {
+                for (const panel of this.panels.keys()) {
+                    void panel.webview.postMessage({ type: 'settings', clickAction: readClickAction() });
+                }
+            }
+            if (e.affectsConfiguration('mapvisual.demangle') || e.affectsConfiguration('mapvisual.formatOverride')) {
                 // Re-parse in place so panels keep their view state (sort/filter/scroll).
                 for (const state of [...this.panels.values()]) {
                     void state.reparse();
@@ -70,10 +84,13 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 for (const [panel, state] of this.panels) {
                     if (state.splitOn && !this.visibleRawEditor(state.uri)) {
                         state.splitOn = false;
+                        this.viewStore.setSplit(state.uri.toString(), false);
                         void panel.webview.postMessage({ type: 'splitChanged', on: false });
                     }
                 }
             }),
+            // the pending view-state write must not be lost on shutdown
+            { dispose: () => this.viewStore.dispose() },
         );
     }
 
@@ -90,7 +107,19 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         webviewPanel.title = path.basename(document.uri.fsPath);
         webview.html = this.getHtml(webview);
 
-        const parseAndSend = async (): Promise<void> => {
+        // A parse already in flight makes a duplicate request pointless — the
+        // worker serializes jobs, so it would only be re-read after the current
+        // one. `trailing` requests (a rebuild landing mid-parse) are not
+        // dropped: they re-run once the current pass settles.
+        let parsing = false;
+        let trailingParse = false;
+
+        const parseAndSend = async (trailing = false): Promise<void> => {
+            if (parsing) {
+                trailingParse ||= trailing;
+                return;
+            }
+            parsing = true;
             void webview.postMessage({ type: 'parsing' });
             const settings = readSettings();
             const req: ParseRequest = {
@@ -134,24 +163,39 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 }
                 const err = e as Error & { kind?: string };
                 void webview.postMessage({ type: 'parseError', error: { kind: err.kind ?? 'io', message: err.message } });
+            } finally {
+                parsing = false;
+                if (trailingParse) {
+                    trailingParse = false;
+                    void parseAndSend(true);
+                }
             }
         };
 
-        // 'ready' and the startup retry both request the first parse; the flag
-        // makes the second caller a no-op instead of parsing the map twice.
-        let initialParseStarted = false;
-        const parseOnce = (): void => {
-            if (initialParseStarted) {
+        // 'ready' and the startup retry both request a parse; the flag makes the
+        // second caller a no-op. A panel that already holds a document (i.e. the
+        // webview was reloaded, not freshly created) replays it — coming back to
+        // the tab must not re-parse a multi-megabyte map, and the file watcher
+        // below keeps that document current while the panel lives.
+        let parseStarted = false;
+        const startOnce = (): void => {
+            if (parseStarted) {
                 return;
             }
-            initialParseStarted = true;
+            parseStarted = true;
+            const state = this.panels.get(webviewPanel);
+            if (state?.doc) {
+                void webview.postMessage({ type: 'parseResult', doc: state.doc });
+                return;
+            }
             void parseAndSend();
         };
 
         // watch the file so rebuilds refresh the view in place
         const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(document.uri.fsPath), path.basename(document.uri.fsPath)));
-        watcher.onDidChange(() => void parseAndSend());
-        watcher.onDidCreate(() => void parseAndSend());
+        // a rebuild is never dropped, even when it lands mid-parse
+        watcher.onDidChange(() => void parseAndSend(true));
+        watcher.onDidCreate(() => void parseAndSend(true));
         watcher.onDidDelete(() => {
             void webview.postMessage({ type: 'parseError', error: { kind: 'notfound', message: 'The map file was deleted on disk.' } });
         });
@@ -166,6 +210,9 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             for (const d of document.disposables.splice(0)) {
                 d.dispose();
             }
+            // the last view-state write must reach the disk even if the window
+            // closes right after
+            this.viewStore.flush();
         });
 
         webviewPanel.onDidChangeViewState(() => {
@@ -178,15 +225,32 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             }
         });
 
-        this.panels.set(webviewPanel, { uri: document.uri, doc: null, reparse: parseAndSend, splitOn: false });
+        this.panels.set(webviewPanel, { uri: document.uri, doc: null, reparse: () => parseAndSend(true), splitOn: false });
 
         webview.onDidReceiveMessage((msg: WebviewToHost) => {
             switch (msg.type) {
-                case 'ready':
-                    parseOnce();
+                case 'ready': {
+                    const key = document.uri.toString();
+                    const state = this.panels.get(webviewPanel);
+                    const entry = this.viewStore.get(key);
+                    // the restored view state must land before the document:
+                    // the webview applies it on the render that follows
+                    void webview.postMessage({ type: 'viewState', state: entry?.view ?? null });
                     // a webview reload re-runs the script with fresh state —
                     // re-sync the split toggle with the host's panel state
-                    void webview.postMessage({ type: 'splitChanged', on: this.panels.get(webviewPanel)?.splitOn === true });
+                    void webview.postMessage({ type: 'splitChanged', on: state?.splitOn === true });
+                    void webview.postMessage({ type: 'settings', clickAction: readClickAction() });
+                    // a fresh webview gets a fresh attempt (a failed parse should
+                    // not leave the reloaded tab empty)
+                    parseStarted = false;
+                    startOnce();
+                    if (entry?.splitOn && !state?.splitOn) {
+                        void this.openSplit(webviewPanel, document.uri, true);
+                    }
+                    break;
+                }
+                case 'persistView':
+                    this.viewStore.setView(document.uri.toString(), msg.state);
                     break;
                 case 'exportCsv':
                     void this.exportCsv(msg.csv, msg.suggestedName, msg.file);
@@ -210,7 +274,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
 
         // The webview posts 'ready' immediately; a brief retry covers slow script startup.
         const retry = setTimeout(() => {
-            parseOnce();
+            startOnce();
         }, 1500);
         document.disposables.push(new vscode.Disposable(() => clearTimeout(retry)));
     }
@@ -281,8 +345,10 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
      * the file is associated with a `priority: "exclusive"` editor: the second
      * showTextDocument would resolve through the same exclusive-only path and
      * throw again, so verify the pane actually appeared instead.
+     * `quiet` suppresses the "could not open" error: restoring a remembered
+     * split must not nag when the association changed behind the user's back.
      */
-    private async openRawEditor(uri: vscode.Uri): Promise<vscode.TextEditor | undefined> {
+    private async openRawEditor(uri: vscode.Uri, quiet = false): Promise<vscode.TextEditor | undefined> {
         const existing = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
         if (existing) {
             return existing;
@@ -293,13 +359,35 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             await vscode.commands.executeCommand('vscode.openWith', uri, 'default', vscode.ViewColumn.Beside);
             const forced = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
             if (!forced) {
-                void vscode.window.showErrorMessage(
-                    `MapVisual: could not open "${path.basename(uri.fsPath)}" as text — check its editor association ("Open With…")`,
-                );
+                if (!quiet) {
+                    void vscode.window.showErrorMessage(
+                        `MapVisual: could not open "${path.basename(uri.fsPath)}" as text — check its editor association ("Open With…")`,
+                    );
+                }
                 return undefined;
             }
             return forced;
         }
+    }
+
+    /**
+     * Open the raw pane on demand and enter split mode. Used by the toolbar
+     * toggle, by a row reveal, and by restoring a remembered split (quiet).
+     */
+    private async openSplit(panel: vscode.WebviewPanel, uri: vscode.Uri, quiet: boolean): Promise<boolean> {
+        const state = this.panels.get(panel);
+        if (!state || state.splitOn) {
+            return state?.splitOn === true;
+        }
+        const editor = await this.openRawEditor(uri, quiet);
+        if (!editor) {
+            return false;
+        }
+        state.rawColumn = editor.viewColumn ?? state.rawColumn;
+        state.splitOn = true;
+        this.viewStore.setSplit(uri.toString(), true);
+        void panel.webview.postMessage({ type: 'splitChanged', on: true });
+        return true;
     }
 
     /** Toggle the raw map text pane beside the map view. */
@@ -312,13 +400,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             await this.closeRawPane(panel, state, uri);
             return;
         }
-        const editor = await this.openRawEditor(uri);
-        if (!editor) {
-            return;
-        }
-        state.rawColumn = editor.viewColumn ?? state.rawColumn;
-        state.splitOn = true;
-        void panel.webview.postMessage({ type: 'splitChanged', on: true });
+        await this.openSplit(panel, uri, false);
     }
 
     /**
@@ -336,6 +418,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         const closed = tabs.length === 0 || (await vscode.window.tabGroups.close(tabs));
         if (closed && state.splitOn) {
             state.splitOn = false;
+            this.viewStore.setSplit(uri.toString(), false);
             void panel.webview.postMessage({ type: 'splitChanged', on: false });
         } else if (!closed) {
             // the tab is still there (confirmation cancelled) — re-sync the truth
@@ -373,6 +456,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         // return below so the button never lies about a visible pane
         if (!state.splitOn) {
             state.splitOn = true;
+            this.viewStore.setSplit(uri.toString(), true);
             void panel.webview.postMessage({ type: 'splitChanged', on: true });
         }
         if (editor.document.uri.toString() !== uri.toString()) {

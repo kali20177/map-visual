@@ -99,6 +99,54 @@ export const EMPTY_KIND_TOTALS = (): Record<SymbolKind, number> => ({
     other: 0,
 });
 
+// ── View state (webview ⇄ host) ──
+// The webview owns this schema (it is the only thing that interprets it) but
+// the host stores and replays it, so the shape is a cross-layer contract and
+// lives here rather than in webview/model.ts — dependency-cruiser forbids the
+// host from reaching into src/webview/.
+//
+// Two layers of persistence, both driven by the same blob:
+//   1. webview `setState`  — survives the webview being torn down and
+//      re-created (switching tabs away and back);
+//   2. host `workspaceState` — survives closing the file and restarting
+//      VS Code, per map file.
+
+export type SortKey = 'size' | 'name' | 'addr' | 'section' | 'object' | 'kind';
+
+export type GroupBy = 'none' | 'object' | 'archive' | 'kind' | 'directory' | 'outSection';
+
+export interface UiState {
+    sortKey: SortKey;
+    sortDir: 'asc' | 'desc';
+    filterText: string;
+    kinds: Record<SymbolKind, boolean>;
+    minSize: number;
+    groupBy: GroupBy;
+    demangle: boolean;
+    hideSystem: boolean;
+    showDiscarded: boolean;
+}
+
+export interface PersistedViewState {
+    /** Schema version: a blob written by an older build is ignored, not misread. */
+    v: number;
+    ui: UiState;
+    collapsed: string[];
+    view: 'list' | 'treemap';
+    /** Treemap drill-down, so a reload does not drop you back at the top level. */
+    treemapGroupKey: string | null;
+    /** Column widths in fr units. */
+    cols: number[];
+    scrollTop: number;
+    /** Indices into the rendered row list (only meaningful for `symbolCount`). */
+    selected: number[];
+    /** Symbol count of the document `selected` was taken from. */
+    symbolCount: number;
+}
+
+/** Current `PersistedViewState.v`. */
+export const VIEW_STATE_VERSION = 1;
+
 // ── Map Diff (M5) ──
 // Shared diff contract: computed in the worker (analysis/diff.ts), consumed
 // by host + diff webview. Kept here so the type import never crosses layer

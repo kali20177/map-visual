@@ -106,6 +106,19 @@
           ],
           "default": "auto",
           "description": "Force the map file format instead of auto-detection."
+        },
+        "mapvisual.clickAction": {
+          "type": "string",
+          "enum": [
+            "locate",
+            "copy"
+          ],
+          "enumDescriptions": [
+            "Reveal the symbol's line in the raw map (opens the text pane beside the view on demand).",
+            "Copy the displayed symbol name to the clipboard."
+          ],
+          "default": "locate",
+          "description": "What a plain click on a symbol row does. Alt+click always performs the other action; double-click always reveals the line in the raw map."
         }
       }
     }

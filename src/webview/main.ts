@@ -1,5 +1,6 @@
-import type { MapDocument, SymbolKind } from '../types';
-import type { HostToWebview, WebviewToHost } from '../protocol';
+import type { MapDocument, PersistedViewState, SymbolKind, SymbolRecord } from '../types';
+import { VIEW_STATE_VERSION } from '../types';
+import type { ClickAction, HostToWebview, WebviewToHost } from '../protocol';
 import {
     DEFAULT_UI_STATE,
     buildView,
@@ -8,19 +9,32 @@ import {
     formatAddr,
     formatBytes,
     groupKeyOf,
+    parseFilterTerms,
     toCsv,
+    type FilterTerms,
+    type GroupBy,
     type GroupView,
     type ListItem,
     type RowView,
+    type SortKey,
     type UiState,
 } from './model';
 import { buildGroups, squarify, type TreemapItem } from './treemap';
 
-declare function acquireVsCodeApi(): { postMessage(msg: WebviewToHost): void };
+declare function acquireVsCodeApi(): {
+    postMessage(msg: WebviewToHost): void;
+    getState(): unknown;
+    setState(state: unknown): void;
+};
 
 const vscode = acquireVsCodeApi();
 const ROW_H = 24;
 const OVERSCAN = 10;
+/** column widths in fr units — must match the `--mv-cols` default in main.css */
+const DEFAULT_COLS = [6.8, 33, 5.6, 23.5, 23.4, 7.7];
+const COL_GAP = 12;
+const COL_PAD = 24; // .mv-thead horizontal padding
+const MIN_COL_PX = 40;
 
 const KIND_ORDER: SymbolKind[] = ['code', 'rodata', 'data', 'bss', 'pad', 'other', 'meta'];
 // kinds that occupy flash/ram storage; `meta` is non-alloc annotation data
@@ -37,17 +51,136 @@ interface AppState {
     demangleAvailable: boolean;
     /** indices into `visible` of ctrl/cmd-clicked rows, exported via the context menu */
     selected: Set<number>;
+    /** what a plain row click does (mapvisual.clickAction); Alt+click does the other */
+    clickAction: ClickAction;
+    /** last row a Shift selection extended from */
+    anchor: number | null;
+    /** column widths in fr units, one per table column */
+    cols: number[];
+    /**
+     * Scroll offset / row selection come back from a stored blob, but only mean
+     * something once the matching document is on screen — they are consumed by
+     * the first render.
+     */
+    pendingScroll: number | null;
+    pendingSelection: { rows: number[]; symbolCount: number } | null;
+}
+
+/** Everything restored from a stored blob, before the document arrives. */
+interface Restore {
+    ui: UiState;
+    collapsed: string[];
+    view: 'list' | 'treemap';
+    cols: number[];
+    treemapGroupKey: string | null;
+    scrollTop: number;
+    selected: number[];
+    /** Symbol count `selected` was taken from; 0 means "not restorable". */
+    symbolCount: number;
+}
+
+const SORT_KEYS: SortKey[] = ['size', 'name', 'addr', 'section', 'object', 'kind'];
+const GROUP_KEYS: GroupBy[] = ['none', 'object', 'archive', 'kind', 'directory', 'outSection'];
+
+function restoreUi(raw: unknown): UiState {
+    const fresh: UiState = { ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } };
+    if (!raw || typeof raw !== 'object') {
+        return fresh;
+    }
+    const p = raw as Partial<UiState>;
+    const kinds = { ...fresh.kinds };
+    if (p.kinds && typeof p.kinds === 'object') {
+        for (const k of KIND_ORDER) {
+            if (typeof p.kinds[k] === 'boolean') {
+                kinds[k] = p.kinds[k];
+            }
+        }
+    }
+    return {
+        ...fresh,
+        kinds,
+        sortKey: SORT_KEYS.includes(p.sortKey as SortKey) ? (p.sortKey as SortKey) : fresh.sortKey,
+        sortDir: p.sortDir === 'asc' || p.sortDir === 'desc' ? p.sortDir : fresh.sortDir,
+        groupBy: GROUP_KEYS.includes(p.groupBy as GroupBy) ? (p.groupBy as GroupBy) : fresh.groupBy,
+        filterText: typeof p.filterText === 'string' ? p.filterText : '',
+        minSize: typeof p.minSize === 'number' && Number.isFinite(p.minSize) && p.minSize > 0 ? p.minSize : 0,
+        demangle: p.demangle !== false,
+        hideSystem: p.hideSystem === true,
+        showDiscarded: p.showDiscarded === true,
+    };
+}
+
+function restoreCols(raw: unknown): number[] {
+    if (!Array.isArray(raw) || raw.length !== DEFAULT_COLS.length) {
+        return [...DEFAULT_COLS];
+    }
+    const cols = raw.map((n) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : NaN));
+    return cols.some((n) => Number.isNaN(n)) ? [...DEFAULT_COLS] : cols;
+}
+
+/**
+ * Validate a stored blob — from the webview's own `getState` or from the host's
+ * `viewState` message (workspaceState). These bytes have been through disk and
+ * older builds, so anything unrecognized falls back to a default instead of
+ * breaking the view.
+ */
+function restoreState(raw: unknown): Restore {
+    const defaults: Restore = {
+        ui: restoreUi(null),
+        collapsed: [],
+        view: 'list',
+        cols: [...DEFAULT_COLS],
+        treemapGroupKey: null,
+        scrollTop: 0,
+        selected: [],
+        symbolCount: 0,
+    };
+    if (!raw || typeof raw !== 'object') {
+        return defaults;
+    }
+    const p = raw as Partial<PersistedViewState>;
+    if (p.v !== VIEW_STATE_VERSION) {
+        return defaults;
+    }
+    return {
+        ui: restoreUi(p.ui),
+        collapsed: Array.isArray(p.collapsed) ? p.collapsed.filter((k): k is string => typeof k === 'string') : [],
+        view: p.view === 'treemap' ? 'treemap' : 'list',
+        cols: restoreCols(p.cols),
+        treemapGroupKey: typeof p.treemapGroupKey === 'string' ? p.treemapGroupKey : null,
+        scrollTop: typeof p.scrollTop === 'number' && Number.isFinite(p.scrollTop) && p.scrollTop > 0 ? p.scrollTop : 0,
+        selected: Array.isArray(p.selected)
+            ? p.selected.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0)
+            : [],
+        symbolCount: typeof p.symbolCount === 'number' && Number.isInteger(p.symbolCount) && p.symbolCount >= 0 ? p.symbolCount : 0,
+    };
+}
+
+// The webview's own state is the fast path (same view, torn down and re-created);
+// the host replays its per-file workspaceState copy on every start and wins
+// when both exist, because it also survives closing the file and restarting.
+const saved = restoreState(vscode.getState());
+
+function pendingRestore(r: Restore): Pick<AppState, 'pendingScroll' | 'pendingSelection'> {
+    return {
+        pendingScroll: r.scrollTop > 0 ? r.scrollTop : null,
+        pendingSelection: r.selected.length > 0 && r.symbolCount > 0 ? { rows: r.selected, symbolCount: r.symbolCount } : null,
+    };
 }
 
 const state: AppState = {
     doc: null,
-    ui: { ...DEFAULT_UI_STATE, kinds: { ...DEFAULT_UI_STATE.kinds } },
-    collapsed: new Set(),
+    ui: saved.ui,
+    collapsed: new Set(saved.collapsed),
     error: null,
-    view: 'list',
-    treemapGroupKey: null,
+    view: saved.view,
+    treemapGroupKey: saved.treemapGroupKey,
     demangleAvailable: false,
     selected: new Set(),
+    clickAction: 'locate',
+    anchor: null,
+    cols: saved.cols,
+    ...pendingRestore(saved),
 };
 
 // ---- DOM handles ----
@@ -60,11 +193,16 @@ root.innerHTML = `
   <div id="mv-shell">
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="mv-file" class="mv-file">—</span><span id="mv-format" class="mv-chip mv-chip-format"></span></div>
-    <input id="mv-search" class="mv-search" type="text" placeholder="Filter symbols (mangled or demangled)…" spellcheck="false" />
+    <div class="mv-searchwrap">
+      <input id="mv-search" class="mv-search" type="text" placeholder="Filter symbols — mangled or demangled (-word excludes)" spellcheck="false" />
+      <button id="mv-search-clear" class="mv-search-clear" type="button" title="Clear the filter (Esc)" aria-label="Clear filter">×</button>
+    </div>
+    <span id="mv-match" class="mv-match" role="status"></span>
     <select id="mv-group" class="mv-select" title="Group by">
       <option value="none">No grouping</option>
       <option value="object">Object / Library</option>
       <option value="archive">Archive</option>
+      <option value="outSection">Output section</option>
       <option value="kind">Section type</option>
       <option value="directory">Directory</option>
     </select>
@@ -101,6 +239,9 @@ const errorHostEl = $('mv-errorhost');
 const fileEl = $('mv-file');
 const formatEl = $<HTMLSpanElement>('mv-format');
 const searchEl = $<HTMLInputElement>('mv-search');
+const searchWrapEl = document.querySelector<HTMLElement>('.mv-searchwrap')!;
+const searchClearEl = $<HTMLButtonElement>('mv-search-clear');
+const matchEl = $<HTMLSpanElement>('mv-match');
 const groupEl = $<HTMLSelectElement>('mv-group');
 const minSizeEl = $<HTMLSelectElement>('mv-minsize');
 const demangleEl = $<HTMLButtonElement>('mv-demangle');
@@ -119,6 +260,11 @@ const toastEl = $('mv-toast');
 
 let visible: ReturnType<typeof flattenItems> = [];
 let toastTimer: number | undefined;
+/**
+ * Scroll offset of the list view, kept even while the treemap is showing so
+ * toggling views does not throw the position away.
+ */
+let listScrollTop = saved.scrollTop;
 
 function post(msg: WebviewToHost): void {
     vscode.postMessage(msg);
@@ -131,28 +277,105 @@ function toast(text: string): void {
     toastTimer = window.setTimeout(() => toastEl.classList.remove('visible'), 1400);
 }
 
+/**
+ * Park the view state in both stores:
+ *   - `setState` keeps it inside the webview itself (cheap, same session);
+ *   - `persistView` hands it to the host, which keeps one copy per map file in
+ *     `workspaceState` — so reopening that file, even in a new window, comes
+ *     back to the same filter, grouping, column widths, scroll offset and
+ *     selection.
+ */
+function persist(): void {
+    const payload: PersistedViewState = {
+        v: VIEW_STATE_VERSION,
+        ui: state.ui,
+        collapsed: [...state.collapsed],
+        view: state.view,
+        treemapGroupKey: state.treemapGroupKey,
+        cols: state.cols,
+        scrollTop: listScrollTop,
+        selected: [...state.selected],
+        symbolCount: state.doc?.symbols.length ?? 0,
+    };
+    vscode.setState(payload);
+    post({ type: 'persistView', state: payload });
+}
+
+/** Column widths live in one CSS variable consumed by both header and rows. */
+function applyCols(): void {
+    document.documentElement.style.setProperty('--mv-cols', state.cols.map((c) => `${c.toFixed(2)}fr`).join(' '));
+}
+
 // ---- rendering ----
 
 function renderHeader(): void {
-    const cols: Array<[string, string, boolean]> = [
-        ['size', 'Size', true],
-        ['name', 'Symbol', true],
-        ['kind', 'Kind', true],
-        ['section', 'Section', true],
-        ['object', 'Object / Library', true],
-        ['addr', 'Address', true],
+    const cols: Array<[string, string]> = [
+        ['size', 'Size'],
+        ['name', 'Symbol'],
+        ['kind', 'Kind'],
+        ['section', 'Section'],
+        ['object', 'Object / Library'],
+        ['addr', 'Address'],
     ];
     theadEl.innerHTML =
         cols
-            .map(([key, label, sortable]) => {
-                if (!sortable) {
-                    return `<div class="mv-th">${label}</div>`;
-                }
+            .map(([key, label], i) => {
                 const active = state.ui.sortKey === key;
                 const arrow = active ? (state.ui.sortDir === 'asc' ? '▲' : '▼') : '';
-                return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}">${label}<span class="mv-arrow">${arrow}</span></div>`;
+                // the last column has no right neighbour to trade width with
+                const grip = i < cols.length - 1 ? `<span class="mv-colresize" data-col="${i}" title="Drag to resize the column"></span>` : '';
+                return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${label}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
             })
             .join('') + `<div class="mv-gutter"></div>`;
+}
+
+/** Reflect the row count of the active filter query in the toolbar chip. */
+function updateMatchChip(count: number): void {
+    const active = state.ui.filterText.trim().length > 0;
+    matchEl.classList.toggle('on', active);
+    matchEl.classList.toggle('none', active && count === 0);
+    matchEl.textContent = count === 0 ? 'no matches' : `${count} ${count === 1 ? 'match' : 'matches'}`;
+}
+
+const MAX_MARKS = 200;
+
+/**
+ * Escape `text` for HTML, wrapping every occurrence of the filter terms in
+ * `<mark>` so the user can see *why* a row matched. Only include-terms are
+ * highlighted (an excluded row is not on screen anyway) and only the visible
+ * window is ever passed through here, so the cost stays in the noise.
+ */
+function highlightHtml(text: string, terms: FilterTerms): string {
+    if (!text || terms.include.length === 0) {
+        return escapeHtml(text);
+    }
+    const hay = text.toLowerCase();
+    const ranges: Array<[number, number]> = [];
+    for (const term of terms.include) {
+        let from = 0;
+        while (ranges.length < MAX_MARKS) {
+            const at = hay.indexOf(term, from);
+            if (at < 0) {
+                break;
+            }
+            ranges.push([at, at + term.length]);
+            from = at + term.length;
+        }
+    }
+    if (ranges.length === 0) {
+        return escapeHtml(text);
+    }
+    ranges.sort((a, b) => a[0] - b[0]);
+    let html = '';
+    let cursor = 0;
+    for (const [start, end] of ranges) {
+        if (start < cursor) {
+            continue; // overlapping hit from a shorter term
+        }
+        html += `${escapeHtml(text.slice(cursor, start))}<mark class="mv-hit">${escapeHtml(text.slice(start, end))}</mark>`;
+        cursor = end;
+    }
+    return html + escapeHtml(text.slice(cursor));
 }
 
 function renderSummary(): void {
@@ -247,17 +470,34 @@ function renderRows(): void {
     if (!doc) {
         return;
     }
+    // A restored selection is only meaningful for the document it was taken
+    // from: a rebuilt map (different symbol count) would put the highlight on
+    // arbitrary rows, so drop it instead.
+    if (state.pendingSelection) {
+        const { rows, symbolCount } = state.pendingSelection;
+        state.pendingSelection = null;
+        if (doc.symbols.length === symbolCount) {
+            state.selected = new Set(rows);
+        }
+    }
     theadEl.style.display = '';
     const items: ListItem[] = buildView(doc, state.ui);
     visible = flattenItems(items, state.collapsed);
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
+    updateMatchChip(visible.filter((v) => v.row).length);
     renderWindow();
+    if (state.pendingScroll != null) {
+        tbodyEl.scrollTop = state.pendingScroll;
+        state.pendingScroll = null;
+        renderWindow(); // paint the window at the restored offset
+    }
 }
 
 function renderWindow(): void {
     const scrollTop = tbodyEl.scrollTop;
     const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
     const end = Math.min(visible.length, Math.ceil((scrollTop + tbodyEl.clientHeight) / ROW_H) + OVERSCAN);
+    const terms = parseFilterTerms(state.ui.filterText);
     let html = '';
     for (let i = start; i < end; i++) {
         const entry = visible[i];
@@ -274,18 +514,20 @@ function renderWindow(): void {
         </div>`;
         } else if (entry.row) {
             const { sym, display, secondary } = entry.row;
-            const objLabel = sym.archive ? `${escapeHtml(baseDisplay(sym.archive))} › ${escapeHtml(sym.member ?? '')}` : escapeHtml(baseDisplay(sym.object));
+            const objLabel = sym.archive
+                ? `${highlightHtml(baseDisplay(sym.archive), terms)} › ${highlightHtml(sym.member ?? '', terms)}`
+                : highlightHtml(baseDisplay(sym.object), terms);
             html += `
         <div class="mv-row mv-datarow k-${sym.kind}${sym.status === 'discarded' ? ' discarded' : ''}${state.selected.has(i) ? ' mv-selected' : ''}" data-i="${i}" style="top:${top}px" tabindex="0"
              title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}" aria-label="${escapeAttr(`${display}, ${formatBytes(sym.size)}, ${sym.section}`)}">
           <div class="mv-td mv-td-size" title="0x${sym.size.toString(16)} (${sym.size} B)">${formatBytes(sym.size)}</div>
           <div class="mv-td mv-td-symbol" title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}">
             <span class="mv-kindbar k-${sym.kind}"></span>
-            <span class="mv-sym">${escapeHtml(display)}</span>
-            ${secondary ? `<span class="mv-sub">${escapeHtml(secondary)}</span>` : ''}
+            <span class="mv-sym">${highlightHtml(display, terms)}</span>
+            ${secondary ? `<span class="mv-sub">${highlightHtml(secondary, terms)}</span>` : ''}
           </div>
           <div class="mv-td"><span class="mv-kindchip k-${sym.kind}">${sym.kind}</span></div>
-          <div class="mv-td mv-mono mv-td-section" title="${escapeAttr(sym.section)}">${escapeHtml(sym.section)}</div>
+          <div class="mv-td mv-mono mv-td-section" title="${escapeAttr(sym.section)}">${highlightHtml(sym.section, terms)}</div>
           <div class="mv-td mv-td-object" title="${escapeAttr(sym.object)}">${sym.isLto ? '<span class="mv-lto">LTO</span>' : ''}${objLabel}</div>
           <div class="mv-td mv-mono mv-td-addr" title="${sym.lma != null ? 'LMA ' + formatAddr(sym.lma) : ''}">${formatAddr(sym.addr)}</div>
         </div>`;
@@ -324,6 +566,7 @@ function renderAll(): void {
         renderRows();
     }
     renderFooter();
+    persist();
 }
 
 // ---- treemap view (M5) ----
@@ -334,8 +577,9 @@ function renderTreemap(): void {
         return;
     }
     theadEl.style.display = 'none';
-    const rows = filterAndSort(doc, state.ui).map((r) => r.sym);
-    const groups = buildGroups(rows, (s) =>
+    const rows = filterAndSort(doc, state.ui);
+    updateMatchChip(rows.length);
+    const groups = buildGroups(rows.map((r) => r.sym), (s) =>
         state.ui.groupBy === 'none' ? groupKeyOf(s, 'object') : groupKeyOf(s, state.ui.groupBy),
     );
     const rect = { x: 8, y: 8, w: tbodyEl.clientWidth - 16, h: tbodyEl.clientHeight - 16 };
@@ -397,6 +641,7 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
         } else {
             state.treemapGroupKey = key;
             renderTreemap();
+            persist(); // the drill-down level is part of the stored view
         }
         return;
     }
@@ -404,6 +649,7 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
     if (crumb) {
         state.treemapGroupKey = null;
         renderTreemap();
+        persist();
     }
 });
 
@@ -422,21 +668,160 @@ function showError(err: { kind: string; message: string }): void {
     btn?.addEventListener('click', () => post({ type: 'openAsText' }));
 }
 
+// ---- row actions, selection, filter helpers ----
+
+/** Selection indices point into `visible`, so any re-filter has to drop them. */
+function clearSelection(): void {
+    state.selected.clear();
+    state.anchor = null;
+}
+
+/** Quote a value that contains whitespace so it stays a single filter term. */
+function quoteTerm(value: string): string {
+    return /\s/.test(value) ? `"${value}"` : value;
+}
+
+function setFilter(text: string): void {
+    searchEl.value = text;
+    state.ui.filterText = text;
+    clearSelection();
+    syncSearchChrome();
+    scheduleRender();
+}
+
+/** Append a term to the running query (what "Exclude object" needs). */
+function addFilterTerm(term: string): void {
+    const current = searchEl.value.trim();
+    setFilter(current ? `${current} ${term}` : term);
+}
+
+/** Keep only rows of `kind`; the kind facets stay the authoritative filter. */
+function onlyKind(kind: SymbolKind): void {
+    for (const k of KIND_ORDER) {
+        state.ui.kinds[k] = k === kind;
+    }
+    clearSelection();
+    renderAll();
+}
+
+/** Reveal a row's line in the raw map — the host opens the text pane on demand. */
+function locateRow(sym: SymbolRecord): void {
+    if (sym.line == null) {
+        toast('No raw map line for this row');
+        return;
+    }
+    post({ type: 'revealRawLine', line: sym.line, name: sym.name });
+}
+
+/**
+ * A plain click runs the configured action, Alt+click runs the other one —
+ * neither gesture is ever unreachable. Double-click is handled separately and
+ * always locates.
+ */
+function runRowAction(row: RowView, alt: boolean): void {
+    const action = alt ? (state.clickAction === 'locate' ? 'copy' : 'locate') : state.clickAction;
+    if (action === 'copy') {
+        copyText(row.display);
+        return;
+    }
+    locateRow(row.sym);
+}
+
+function toggleSelected(i: number): void {
+    if (state.selected.has(i)) {
+        state.selected.delete(i);
+    } else {
+        state.selected.add(i);
+    }
+}
+
+/** Add every row between the anchor and `i` to the selection. */
+function extendSelectionTo(i: number): void {
+    const from = state.anchor ?? i;
+    for (let k = Math.min(from, i); k <= Math.max(from, i); k++) {
+        if (visible[k]?.row) {
+            state.selected.add(k);
+        }
+    }
+}
+
+/** Repaint after a selection change — the selection is part of the stored view. */
+function renderSelection(): void {
+    renderWindow();
+    persist();
+}
+
+/** Shift+click / Shift+Arrow: select everything between the anchor and `i`. */
+function selectRange(i: number): void {
+    extendSelectionTo(i);
+    renderSelection();
+}
+
+function syncSearchChrome(): void {
+    searchWrapEl.classList.toggle('has-text', searchEl.value.length > 0);
+}
+
+/** The Raw button doubles as the hint for how a row gets revealed. */
+function updateClickHint(): void {
+    splitEl.title =
+        state.clickAction === 'locate'
+            ? 'Show the raw map file beside this view — a plain click on a row jumps to its line'
+            : 'Show the raw map file beside this view — double-click a row (or Alt+click) to jump to its line';
+}
+
+/** Push restored state into the DOM controls (the shell is built empty). */
+function syncControls(): void {
+    searchEl.value = state.ui.filterText;
+    groupEl.value = state.ui.groupBy;
+    minSizeEl.value = String(state.ui.minSize);
+    if (minSizeEl.value !== String(state.ui.minSize)) {
+        // a stored value that is no longer an option would render the select blank
+        state.ui.minSize = 0;
+        minSizeEl.value = '0';
+    }
+    viewEl.classList.toggle('on', state.view === 'treemap');
+    syncSearchChrome();
+    syncToggles();
+    updateClickHint();
+    applyCols();
+}
+
+/** Apply a blob the host replayed (workspaceState) on top of the current view. */
+function applyRestore(r: Restore): void {
+    state.ui = r.ui;
+    state.collapsed = new Set(r.collapsed);
+    state.view = r.view;
+    state.treemapGroupKey = r.treemapGroupKey;
+    state.cols = r.cols;
+    listScrollTop = r.scrollTop;
+    Object.assign(state, pendingRestore(r));
+    clearSelection();
+    syncControls();
+    if (state.doc) {
+        renderAll();
+    }
+}
+
 // ---- events ----
 
 searchEl.addEventListener('input', () => {
     state.ui.filterText = searchEl.value;
-    state.selected.clear();
+    clearSelection();
+    syncSearchChrome();
     scheduleRender();
+});
+searchClearEl.addEventListener('click', () => {
+    setFilter('');
+    searchEl.focus();
 });
 groupEl.addEventListener('change', () => {
     state.ui.groupBy = groupEl.value as UiState['groupBy'];
-    state.selected.clear();
+    clearSelection();
     renderAll();
 });
 minSizeEl.addEventListener('change', () => {
     state.ui.minSize = parseInt(minSizeEl.value, 10) || 0;
-    state.selected.clear();
+    clearSelection();
     renderAll();
 });
 demangleEl.addEventListener('click', () => {
@@ -449,13 +834,13 @@ demangleEl.addEventListener('click', () => {
 });
 systemEl.addEventListener('click', () => {
     state.ui.hideSystem = !state.ui.hideSystem;
-    state.selected.clear();
+    clearSelection();
     syncToggles();
     renderAll();
 });
 discardedEl.addEventListener('click', () => {
     state.ui.showDiscarded = !state.ui.showDiscarded;
-    state.selected.clear();
+    clearSelection();
     syncToggles();
     renderAll();
 });
@@ -479,7 +864,72 @@ exportEl.addEventListener('click', () => {
     post({ type: 'exportCsv', csv: toCsv(rows, state.ui.demangle), suggestedName: baseDisplay(doc.file).replace(/\.map$/i, '') + '.csv', file: doc.file });
 });
 
+// ---- column resizing ----
+
+interface ColDrag {
+    col: number;
+    startX: number;
+    startCols: number[];
+    pxPerFr: number;
+    grip: HTMLElement;
+}
+
+let colDrag: ColDrag | null = null;
+
+/** Pixels per fr unit in the current header layout. */
+function colDragUnit(): number {
+    const total = state.cols.reduce((a, b) => a + b, 0);
+    const gaps = (state.cols.length - 1) * COL_GAP;
+    return Math.max(0.5, (theadEl.clientWidth - COL_PAD - gaps) / total);
+}
+
+theadEl.addEventListener('mousedown', (ev) => {
+    const grip = (ev.target as HTMLElement).closest('.mv-colresize') as HTMLElement | null;
+    if (!grip) {
+        return;
+    }
+    ev.preventDefault();
+    grip.classList.add('active');
+    document.body.classList.add('mv-col-dragging');
+    colDrag = { col: parseInt(grip.dataset.col!, 10), startX: ev.clientX, startCols: [...state.cols], pxPerFr: colDragUnit(), grip };
+
+    const move = (e: MouseEvent): void => {
+        if (!colDrag) {
+            return;
+        }
+        // width trades between the two neighbours, so the table keeps filling
+        // the panel no matter how narrow it gets
+        const delta = (e.clientX - colDrag.startX) / colDrag.pxPerFr;
+        const min = MIN_COL_PX / colDrag.pxPerFr;
+        const left = colDrag.startCols[colDrag.col] + delta;
+        const right = colDrag.startCols[colDrag.col + 1] - delta;
+        if (left < min || right < min) {
+            return;
+        }
+        const next = [...colDrag.startCols];
+        next[colDrag.col] = left;
+        next[colDrag.col + 1] = right;
+        state.cols = next;
+        applyCols(); // header and rows share the variable — no re-render needed
+    };
+    const up = (): void => {
+        document.removeEventListener('mousemove', move);
+        grip.classList.remove('active');
+        document.body.classList.remove('mv-col-dragging');
+        colDrag = null;
+        // snap on release so repeated drags cannot accumulate float noise
+        state.cols = state.cols.map((c) => Math.round(c * 100) / 100);
+        applyCols();
+        persist();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up, { once: true });
+});
+
 theadEl.addEventListener('click', (ev) => {
+    if ((ev.target as HTMLElement).closest('.mv-colresize')) {
+        return; // the grip click that ends a resize is not a sort click
+    }
     const th = (ev.target as HTMLElement).closest('[data-sort]') as HTMLElement | null;
     if (!th) {
         return;
@@ -491,15 +941,32 @@ theadEl.addEventListener('click', (ev) => {
         state.ui.sortKey = key;
         state.ui.sortDir = key === 'size' ? 'desc' : 'asc';
     }
-    state.selected.clear();
+    clearSelection();
     renderHeader();
     renderRows();
     renderFooter();
+    persist();
 });
 
-tbodyEl.addEventListener('scroll', () => renderWindow());
+let scrollPersistTimer: number | undefined;
+tbodyEl.addEventListener('scroll', () => {
+    renderWindow();
+    listScrollTop = tbodyEl.scrollTop;
+    // the offset is part of the restored view, but a fast scroll must not
+    // trigger a write per frame
+    if (scrollPersistTimer === undefined) {
+        scrollPersistTimer = window.setTimeout(() => {
+            scrollPersistTimer = undefined;
+            persist();
+        }, 250);
+    }
+});
 
 tbodyEl.addEventListener('click', (ev) => {
+    // the second click of a double-click is the dblclick handler's business
+    if (ev.detail > 1) {
+        return;
+    }
     const groupElHit = (ev.target as HTMLElement).closest('[data-group]') as HTMLElement | null;
     if (groupElHit) {
         const key = groupElHit.dataset.group!;
@@ -509,34 +976,47 @@ tbodyEl.addEventListener('click', (ev) => {
             state.collapsed.add(key);
         }
         renderRows();
+        persist();
         return;
     }
     const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
     if (!rowEl) {
         return;
     }
-    const entry = visible[parseInt(rowEl.dataset.i!, 10)];
+    const i = parseInt(rowEl.dataset.i!, 10);
+    const entry = visible[i];
     if (!entry?.row) {
         return;
     }
+    if (ev.shiftKey) {
+        selectRange(i);
+        return;
+    }
     if (ev.ctrlKey || ev.metaKey) {
-        const i = parseInt(rowEl.dataset.i!, 10);
-        if (state.selected.has(i)) {
-            state.selected.delete(i);
-        } else {
-            state.selected.add(i);
-        }
-        renderWindow();
+        toggleSelected(i);
+        state.anchor = i;
+        renderSelection();
         return;
     }
-    // click = locate the row's line in the raw map text (host opens the pane
-    // beside on demand); copying lives in the row context menu
-    const sym = entry.row.sym;
-    if (sym.line == null) {
-        toast('No raw map line for this row');
+    state.anchor = i;
+    runRowAction(entry.row, ev.altKey);
+});
+
+// Double-click is the universal "where is this?" gesture: it locates the row
+// in the raw map (opening the split pane on demand) whatever the configured
+// click action is. The plain clicks that precede it are ignored via `detail`.
+tbodyEl.addEventListener('dblclick', (ev) => {
+    if (state.view !== 'list') {
         return;
     }
-    post({ type: 'revealRawLine', line: sym.line, name: sym.name });
+    const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
+    if (!rowEl) {
+        return;
+    }
+    const entry = rowEntryAt(rowEl);
+    if (entry) {
+        locateRow(entry.row.sym);
+    }
 });
 
 // ---- row context menu (M3) ----
@@ -586,15 +1066,11 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
         { label: `Copy demangled  ${truncateLabel(display)}`, action: () => copyText(display) },
         { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
         { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
-        {
-            label: `Filter by object  ${truncateLabel(objBase)}`,
-            action: () => {
-                searchEl.value = objBase;
-                state.ui.filterText = searchEl.value;
-                state.selected.clear();
-                scheduleRender();
-            },
-        },
+        { label: 'Reveal in the raw map', action: () => locateRow(sym) },
+        { label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) },
+        { label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) },
+        { label: `Show only kind  ${sym.kind}`, action: () => onlyKind(sym.kind) },
+        { label: `Exclude object  ${truncateLabel(objBase)}`, action: () => addFilterTerm(`-${quoteTerm(objBase)}`) },
     ];
     if (state.selected.size > 0) {
         items.push({
@@ -648,11 +1124,17 @@ document.addEventListener('click', closeMenu);
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') {
         closeMenu();
+        if (searchEl.value) {
+            // first Esc drops the query, a second one the selection
+            setFilter('');
+            return;
+        }
         if (state.selected.size > 0) {
-            state.selected.clear();
+            clearSelection();
             if (state.view === 'list') {
                 renderWindow();
             }
+            persist();
         }
     }
 });
@@ -665,8 +1147,30 @@ document.addEventListener('keydown', (ev) => {
     }
 });
 
-// keyboard access for rows: arrows move focus across the virtualized window,
-// Enter reveals the raw map line (same as click), Shift+F10 / ContextMenu opens the row menu
+// select every visible row (the export menu takes it from there) — but never
+// while the user is typing in a control, where Ctrl+A means "select all text"
+document.addEventListener('keydown', (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== 'a' || state.view !== 'list') {
+        return;
+    }
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLSelectElement || active instanceof HTMLTextAreaElement) {
+        return;
+    }
+    ev.preventDefault();
+    clearSelection();
+    visible.forEach((entry, i) => {
+        if (entry.row) {
+            state.selected.add(i);
+        }
+    });
+    state.anchor = 0;
+    renderSelection();
+});
+
+// keyboard access for rows: arrows move focus across the virtualized window
+// (Shift extends the selection), Enter runs the configured click action,
+// Shift+F10 / ContextMenu opens the row menu
 tbodyEl.addEventListener('keydown', (ev) => {
     if (ev.altKey || ev.ctrlKey || ev.metaKey) {
         return;
@@ -681,6 +1185,12 @@ tbodyEl.addEventListener('keydown', (ev) => {
         const current = parseInt(rowEl.dataset.i!, 10);
         const next = ev.key === 'ArrowDown' ? current + 1 : ev.key === 'ArrowUp' ? current - 1 : ev.key === 'Home' ? 0 : visible.length - 1;
         if (next >= 0 && next < visible.length && next !== current) {
+            if (ev.shiftKey) {
+                if (state.anchor === null) {
+                    state.anchor = current;
+                }
+                extendSelectionTo(next);
+            }
             focusRow(next);
         }
     } else if (ev.key === 'Enter') {
@@ -710,9 +1220,7 @@ summaryEl.addEventListener('click', (ev) => {
     }
     const top = (ev.target as HTMLElement).closest('[data-filter]') as HTMLElement | null;
     if (top) {
-        searchEl.value = top.dataset.filter!;
-        state.ui.filterText = searchEl.value;
-        scheduleRender();
+        setFilter(quoteTerm(top.dataset.filter!));
     }
 });
 
@@ -759,7 +1267,13 @@ function baseDisplay(p: string): string {
 
 window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     const msg = ev.data;
-    if (msg.type === 'parseResult') {
+    if (msg.type === 'viewState') {
+        // the host's copy is the cross-session truth; null means nothing is
+        // stored for this file, in which case the webview's own state stands
+        if (msg.state) {
+            applyRestore(restoreState(msg.state));
+        }
+    } else if (msg.type === 'parseResult') {
         state.doc = msg.doc;
         state.error = null;
         // bring the shell back if an error page took over (B2), then repaint
@@ -767,11 +1281,14 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         errorHostEl.replaceChildren();
         shellEl.style.display = '';
         state.demangleAvailable = msg.doc.symbols.some((s) => s.demangled != null);
-        state.selected.clear();
+        clearSelection();
         fileEl.textContent = baseDisplay(msg.doc.file);
         formatEl.textContent = msg.doc.format;
         syncToggles();
         renderAll();
+    } else if (msg.type === 'settings') {
+        state.clickAction = msg.clickAction === 'copy' ? 'copy' : 'locate';
+        updateClickHint();
     } else if (msg.type === 'parseError') {
         showError(msg.error);
     } else if (msg.type === 'parseCancelled') {
@@ -789,5 +1306,17 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         toast('Raw line not found — the map file may have changed since parsing');
     }
 });
+
+// Last-chance write: the webview is torn down right after it is hidden, so the
+// freshest scroll offset and selection must go out now rather than on a timer.
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        persist();
+    }
+});
+
+// the shell HTML is built fresh on every reload — replay the restored state
+// into the controls before asking the host for a parse
+syncControls();
 
 post({ type: 'ready' });

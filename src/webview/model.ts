@@ -1,24 +1,15 @@
-import type { MapDocument, SymbolKind, SymbolRecord } from '../types';
+import type { GroupBy, MapDocument, SortKey, SymbolRecord, UiState } from '../types';
 
 /**
  * Pure view-model for the webview: filtering, sorting, grouping, formatting.
  * No DOM / vscode API access here so it can be unit-tested in Node.
+ *
+ * `SortKey` / `GroupBy` / `UiState` are re-exported for the webview's own
+ * import sites; they live in types.ts because the host also round-trips them
+ * as part of the persisted view state.
  */
 
-export type SortKey = 'size' | 'name' | 'addr' | 'section' | 'object' | 'kind';
-export type GroupBy = 'none' | 'object' | 'archive' | 'kind' | 'directory';
-
-export interface UiState {
-    sortKey: SortKey;
-    sortDir: 'asc' | 'desc';
-    filterText: string;
-    kinds: Record<SymbolKind, boolean>;
-    minSize: number;
-    groupBy: GroupBy;
-    demangle: boolean;
-    hideSystem: boolean;
-    showDiscarded: boolean;
-}
+export type { GroupBy, SortKey, UiState } from '../types';
 
 export const DEFAULT_UI_STATE: UiState = {
     sortKey: 'size',
@@ -69,7 +60,56 @@ export function secondaryName(sym: SymbolRecord, demangle: boolean): string | nu
     return other !== primary ? other : null;
 }
 
-function matchesFilter(sym: SymbolRecord, ui: UiState): boolean {
+/** A parsed filter query: `include` terms are ANDed, `exclude` terms veto a row. */
+export interface FilterTerms {
+    include: string[];
+    exclude: string[];
+}
+
+const isSpace = (ch: string): boolean => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v';
+
+/**
+ * Tokenize a filter query. Whitespace separates terms, a leading `-` excludes,
+ * and double quotes hold a phrase together — object names and paths carry
+ * spaces (`linker stubs`, `My Project/build/x.o`), so `-"linker stubs"` has to
+ * stay one term. Unterminated quotes take the rest of the query.
+ */
+export function parseFilterTerms(query: string): FilterTerms {
+    const include: string[] = [];
+    const exclude: string[] = [];
+    let i = 0;
+    while (i < query.length) {
+        while (i < query.length && isSpace(query.charAt(i))) {
+            i++;
+        }
+        if (i >= query.length) {
+            break;
+        }
+        const negated = query.charAt(i) === '-';
+        if (negated) {
+            i++;
+        }
+        let term = '';
+        if (query.charAt(i) === '"') {
+            i++;
+            const end = query.indexOf('"', i);
+            term = end < 0 ? query.slice(i) : query.slice(i, end);
+            i = end < 0 ? query.length : end + 1;
+        } else {
+            while (i < query.length && !isSpace(query.charAt(i))) {
+                term += query.charAt(i);
+                i++;
+            }
+        }
+        const normalized = term.toLowerCase();
+        if (normalized) {
+            (negated ? exclude : include).push(normalized);
+        }
+    }
+    return { include, exclude };
+}
+
+function matchesFilter(sym: SymbolRecord, ui: UiState, terms: FilterTerms): boolean {
     if (!ui.showDiscarded && sym.status === 'discarded') {
         return false;
     }
@@ -82,11 +122,17 @@ function matchesFilter(sym: SymbolRecord, ui: UiState): boolean {
     if (sym.size < ui.minSize && !sym.isFill) {
         return false;
     }
-    const text = ui.filterText.trim().toLowerCase();
-    if (text) {
+    if (terms.include.length > 0 || terms.exclude.length > 0) {
         const hay = `${sym.name}\n${sym.demangled ?? ''}\n${sym.mangled ?? ''}\n${sym.section}\n${sym.object}`.toLowerCase();
-        if (!hay.includes(text)) {
-            return false;
+        for (const term of terms.include) {
+            if (!hay.includes(term)) {
+                return false;
+            }
+        }
+        for (const term of terms.exclude) {
+            if (hay.includes(term)) {
+                return false;
+            }
         }
     }
     return true;
@@ -110,7 +156,10 @@ function sortKeyOf(sym: SymbolRecord, key: SortKey, demangle: boolean): string |
 }
 
 export function filterAndSort(doc: MapDocument, ui: UiState): RowView[] {
-    const kept = doc.symbols.filter((s) => matchesFilter(s, ui));
+    // parsed once per pass — matchesFilter runs per symbol, this is the only
+    // place the query string is tokenized
+    const terms = parseFilterTerms(ui.filterText);
+    const kept = doc.symbols.filter((s) => matchesFilter(s, ui, terms));
     const dir = ui.sortDir === 'asc' ? 1 : -1;
     const key = ui.sortKey;
     kept.sort((a, b) => {
@@ -141,6 +190,10 @@ export function groupKeyOf(sym: SymbolRecord, groupBy: GroupBy): string {
             return sym.archive ? baseName(sym.archive) : '(no archive)';
         case 'kind':
             return sym.kind;
+        case 'outSection':
+            // link-script granularity: `section` is the *input* section, so
+            // grouping by it splits `.text` into one group per function
+            return sym.outSection ?? (sym.section || '(none)');
         case 'directory': {
             const dir = directoryOf(sym.object);
             return dir || '(root)';

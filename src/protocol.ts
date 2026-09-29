@@ -1,4 +1,4 @@
-import type { MapDocument } from './types';
+import type { MapDocument, PersistedViewState } from './types';
 import type { DiffResult } from './types';
 
 /** extension host → worker */
@@ -13,8 +13,17 @@ export type WorkerToHost =
     | { type: 'diffResult'; diff: DiffResult }
     | { type: 'error'; error: { kind: 'notfound' | 'json' | 'unsupported' | 'unknown' | 'io'; message: string } };
 
+/**
+ * What a plain click on a symbol row does (`mapvisual.clickAction`).
+ * Alt+click always performs the other one; double-click always locates.
+ */
+export type ClickAction = 'locate' | 'copy';
+
 /** extension host → webview */
 export type HostToWebview =
+    | { type: 'settings'; clickAction: ClickAction }
+    /** view state stored for this map file (workspaceState), replayed on every webview start */
+    | { type: 'viewState'; state: PersistedViewState | null }
     | { type: 'parseResult'; doc: MapDocument }
     | { type: 'parseError'; error: { kind: string; message: string } }
     | { type: 'parseCancelled' }
@@ -26,6 +35,7 @@ export type HostToWebview =
 /** webview → extension host */
 export type WebviewToHost =
     | { type: 'ready' }
+    | { type: 'persistView'; state: PersistedViewState }
     | { type: 'exportCsv'; csv: string; suggestedName: string; file?: string }
     | { type: 'openAsText' }
     | { type: 'revealSource'; object: string; member: string | null }

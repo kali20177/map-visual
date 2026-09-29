@@ -10,6 +10,9 @@
     --mv-meta: #9d9da3;
     --mv-flash: #4a90d9;
     --mv-ram: #e8943a;
+    /* column widths as fr units: proportional, so the table always fits the
+       panel (percentages would overflow once the 12px column gaps are added) */
+    --mv-cols: 6.8fr 33fr 5.6fr 23.5fr 23.4fr 7.7fr;
 }
 
 body.vscode-light {
@@ -110,9 +113,17 @@ body {
     letter-spacing: 0.4px;
 }
 
+.mv-searchwrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+
 .mv-search {
-    flex: 1 1 200px;
-    min-width: 160px;
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 4px 8px;
     border: 1px solid var(--vscode-input-border, transparent);
     background: var(--vscode-input-background);
@@ -121,8 +132,56 @@ body {
     outline: none;
 }
 
+.mv-searchwrap.has-text .mv-search {
+    padding-right: 24px;
+}
+
 .mv-search:focus {
     border-color: var(--vscode-focusBorder);
+}
+
+.mv-search-clear {
+    position: absolute;
+    right: 4px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--vscode-input-foreground, inherit);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.65;
+}
+
+.mv-searchwrap.has-text .mv-search-clear {
+    display: flex;
+}
+
+.mv-search-clear:hover {
+    opacity: 1;
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
+}
+
+.mv-match {
+    display: none;
+    font-size: 11px;
+    font-family: var(--vscode-editor-font-family);
+    color: var(--vscode-descriptionForeground);
+    white-space: nowrap;
+}
+
+.mv-match.on {
+    display: inline-block;
+}
+
+.mv-match.none {
+    color: var(--vscode-editorWarning-foreground, #cca700);
 }
 
 .mv-select {
@@ -393,7 +452,7 @@ body {
 
 .mv-thead {
     display: grid;
-    grid-template-columns: 92px minmax(220px, 1.4fr) 76px minmax(130px, 1fr) minmax(150px, 1fr) 108px;
+    grid-template-columns: var(--mv-cols);
     gap: 0 12px;
     padding: 5px 12px;
     border-left: 2px solid transparent;
@@ -408,8 +467,48 @@ body {
 }
 
 .mv-th {
+    position: relative;
     white-space: nowrap;
+    /* the resize grip sticks out into the column gap, so the cell itself
+       must not clip (the label span does the ellipsis instead) */
+    overflow: visible;
+}
+
+.mv-th-label {
+    display: block;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mv-colresize {
+    position: absolute;
+    top: -5px;
+    bottom: -5px;
+    right: -8px;
+    width: 14px;
+    cursor: col-resize;
+    z-index: 1;
+}
+
+.mv-colresize::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: transparent;
+}
+
+.mv-colresize:hover::after,
+.mv-colresize.active::after {
+    background: var(--vscode-focusBorder);
+}
+
+body.mv-col-dragging {
+    cursor: col-resize;
+    user-select: none;
 }
 
 .mv-sortable {
@@ -457,7 +556,7 @@ body {
     right: 0;
     height: 24px;
     display: grid;
-    grid-template-columns: 92px minmax(220px, 1.4fr) 76px minmax(130px, 1fr) minmax(150px, 1fr) 108px;
+    grid-template-columns: var(--mv-cols);
     gap: 0 12px;
     align-items: center;
     padding: 0 12px;
@@ -542,6 +641,13 @@ body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* filter hit inside a cell (search box query) */
+mark.mv-hit {
+    background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 179, 8, 0.35));
+    color: inherit;
+    border-radius: 2px;
 }
 
 .mv-sub {

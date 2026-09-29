@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 191 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 207 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
 
@@ -32,7 +32,7 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 
 ## 目录
 
-- `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）
+- `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` `viewState.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）；`viewState.ts` 是宿主侧的按文件视图状态存储（不 import vscode，用结构化接口，可单测）
 - `src/worker.ts` 与 `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/` — worker 运行时，纯 Node，禁止 vscode
 - `src/cli.ts` `src/cliApp.ts` — CLI 运行时（M6，第四入口，独立进程直接调 parser/analysis，不经 worker_threads）：逻辑在 cliApp 的 `runCli` 纯函数（可测、可被未来 MCP 复用），cli.ts 只做进程接线；同受禁 vscode 约束，且只准依赖 worker 树核心与 types/protocol（depcruise cli-allowlist 白名单）
 - `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块

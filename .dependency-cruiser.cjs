@@ -27,8 +27,8 @@ module.exports = {
       name: 'host-must-use-worker',
       severity: 'error',
       comment:
-        '宿主隔离：extension/mapEditor/diffPanel/workerClient 不得直接 import 解析器/分析器，解析必须经 worker（大文件解析不能阻塞扩展宿主）。',
-      from: { path: '^src/(extension\\.ts|mapEditor\\.ts|diffPanel\\.ts|workerClient\\.ts)' },
+        '宿主隔离：extension/mapEditor/diffPanel/workerClient/viewState 不得直接 import 解析器/分析器，解析必须经 worker（大文件解析不能阻塞扩展宿主）。',
+      from: { path: '^src/(extension\\.ts|mapEditor\\.ts|diffPanel\\.ts|workerClient\\.ts|viewState\\.ts)' },
       to: { path: '^src/(parser/|demangle/|analysis/)' },
     },
     {

@@ -7,6 +7,7 @@ import {
     formatAddr,
     formatBytes,
     groupKeyOf,
+    parseFilterTerms,
     toCsv,
     type UiState,
 } from '../../src/webview/model';
@@ -86,6 +87,42 @@ describe('filterAndSort', () => {
         const withDiscarded = filterAndSort(doc(SAMPLE), ui({ showDiscarded: true }));
         expect(withDiscarded.find((r) => r.sym.status === 'discarded')).toBeDefined();
     });
+
+    it('ANDs whitespace-separated terms', () => {
+        const both = filterAndSort(doc(SAMPLE), ui({ filterText: 'main.cpp g_table' }));
+        expect(both.map((r) => r.sym.name)).toEqual(['g_table']);
+    });
+
+    it('drops rows matching a -term', () => {
+        const without = filterAndSort(doc(SAMPLE), ui({ filterText: '-main.cpp' }));
+        expect(without.every((r) => !r.sym.object.includes('main.cpp'))).toBe(true);
+        expect(without.length).toBe(3); // foo, g_buf, crt_row
+    });
+});
+
+describe('parseFilterTerms', () => {
+    it('splits on whitespace and lowercases', () => {
+        expect(parseFilterTerms('  Main  UTIL ')).toEqual({ include: ['main', 'util'], exclude: [] });
+    });
+
+    it('treats a leading dash as exclusion', () => {
+        expect(parseFilterTerms('-libc.a crt')).toEqual({ include: ['crt'], exclude: ['libc.a'] });
+        expect(parseFilterTerms('-"linker stubs"')).toEqual({ include: [], exclude: ['linker stubs'] });
+    });
+
+    it('keeps quoted phrases together — paths and object names carry spaces', () => {
+        expect(parseFilterTerms('"My Project/build/x.o"')).toEqual({ include: ['my project/build/x.o'], exclude: [] });
+    });
+
+    it('takes an unterminated quote to the end of the query', () => {
+        expect(parseFilterTerms('-"half')).toEqual({ include: [], exclude: ['half'] });
+        expect(parseFilterTerms('a "half')).toEqual({ include: ['a', 'half'], exclude: [] });
+    });
+
+    it('drops empty input and stray dashes', () => {
+        expect(parseFilterTerms('   ')).toEqual({ include: [], exclude: [] });
+        expect(parseFilterTerms('-')).toEqual({ include: [], exclude: [] });
+    });
 });
 
 describe('grouping', () => {
@@ -102,6 +139,24 @@ describe('grouping', () => {
 
     it('uses archive›member labels for archive members', () => {
         expect(groupKeyOf(SAMPLE[3], 'object')).toBe('lib.a › b.o');
+    });
+
+    it('groups by output section, falling back to the input section when absent', () => {
+        const syms = [
+            sym({ name: 'a', section: '.text.a', outSection: '.text', size: 10 }),
+            sym({ name: 'b', section: '.text.b', outSection: '.text', size: 5 }),
+            sym({ name: 'c', section: '.rodata.c', outSection: '.rodata', size: 1 }),
+            sym({ name: 'd', section: '.init', outSection: null, size: 2 }),
+        ];
+        expect(groupKeyOf(syms[0]!, 'outSection')).toBe('.text');
+        expect(groupKeyOf(syms[3]!, 'outSection')).toBe('.init');
+        // functions of the same output section collapse into one group
+        const groups = buildView(doc(syms), ui({ groupBy: 'outSection' })).filter(
+            (i): i is Extract<typeof i, { kind: 'group' }> => i.kind === 'group',
+        );
+        expect(groups.map((g) => g.label)).toEqual(['.text', '.init', '.rodata']); // size desc
+        expect(groups[0]!.size).toBe(15);
+        expect(groups[0]!.count).toBe(2);
     });
 
     it('collapsing removes child rows from the flattened list', () => {
