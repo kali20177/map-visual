@@ -263,6 +263,15 @@ const footerEl = $('mv-footer');
 const toastEl = $('mv-toast');
 
 let visible: ReturnType<typeof flattenItems> = [];
+/**
+ * How many rows the current view is actually showing — what the footer's
+ * numerator reports. It is a stored count rather than something `renderFooter`
+ * can read off the DOM, because the two views fill different things: the list
+ * builds `visible` (a collapsed group hides its rows), the treemap builds tiles
+ * and never touches `visible` at all. Computing it here keeps the footer
+ * truthful in both views instead of frozen at the last list render.
+ */
+let shownRows = 0;
 let toastTimer: number | undefined;
 /**
  * Scroll offset of the list view, kept even while the treemap is showing so
@@ -506,6 +515,7 @@ function renderRows(): void {
     theadEl.style.display = '';
     const items: ListItem[] = buildView(doc, state.ui);
     visible = flattenItems(items, state.collapsed);
+    shownRows = visible.filter((v) => v.row).length;
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
     // count matched rows, not painted ones: a collapsed group still matched
     // (the treemap view counts the same way)
@@ -570,12 +580,11 @@ function renderFooter(): void {
         footerEl.textContent = '';
         return;
     }
-    const shown = visible.filter((v) => v.row).length;
     const t = doc.totals;
     // the denominator must cover whatever the numerator can show
     const total = state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount;
     const parts = [
-        `${shown} / ${total} symbols`,
+        `${shownRows} / ${total} symbols`,
         `Flash ${formatBytes(t.flash)}`,
         `RAM ${formatBytes(t.ram)}`,
         t.discardedCount > 0 ? `${t.discardedCount} removed by gc` : '',
@@ -606,6 +615,8 @@ function renderTreemap(): void {
     }
     theadEl.style.display = 'none';
     const rows = filterAndSort(doc, state.ui);
+    // no collapsed groups here, so every matched row is on the screen
+    shownRows = rows.length;
     updateMatchChip(rows.length);
     const groups = buildGroups(rows.map((r) => r.sym), (s) =>
         state.ui.groupBy === 'none' ? groupKeyOf(s, 'object') : groupKeyOf(s, state.ui.groupBy),
@@ -1104,17 +1115,18 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
         { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
         { label: 'Reveal in the raw map', action: () => locateRow(sym) },
     ];
-    // both guards keep an empty value from turning the item into "clear the filter"
+    // the guards keep an empty value from turning "filter by" into "clear the
+    // filter" and "exclude" into a stray `-` token in the query
     if (objBase) {
         items.push({ label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) });
     }
     if (sym.section) {
         items.push({ label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) });
     }
-    items.push(
-        { label: `Show only kind  ${sym.kind}`, action: () => onlyKind(sym.kind) },
-        { label: `Exclude object  ${truncateLabel(objBase)}`, action: () => addFilterTerm(`-${quoteTerm(objBase)}`) },
-    );
+    items.push({ label: `Show only kind  ${sym.kind}`, action: () => onlyKind(sym.kind) });
+    if (objBase) {
+        items.push({ label: `Exclude object  ${truncateLabel(objBase)}`, action: () => addFilterTerm(`-${quoteTerm(objBase)}`) });
+    }
     if (state.selected.size > 0) {
         items.push({
             label: `Export selected rows as CSV (${state.selected.size})`,
@@ -1228,13 +1240,20 @@ tbodyEl.addEventListener('keydown', (ev) => {
         const current = parseInt(rowEl.dataset.i!, 10);
         const next = ev.key === 'ArrowDown' ? current + 1 : ev.key === 'ArrowUp' ? current - 1 : ev.key === 'Home' ? 0 : visible.length - 1;
         if (next >= 0 && next < visible.length && next !== current) {
-            if (ev.shiftKey) {
+            const extending = ev.shiftKey;
+            if (extending) {
                 if (state.anchor === null) {
                     state.anchor = current;
                 }
                 extendSelectionTo(next);
             }
             focusRow(next);
+            if (extending) {
+                // the selection is part of the stored view, so it has to reach
+                // the host — but `renderSelection()` would repaint after
+                // `focusRow` moved the focus and drop it, hence the bare write
+                persist();
+            }
         }
     } else if (ev.key === 'Enter') {
         ev.preventDefault();
