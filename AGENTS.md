@@ -61,4 +61,4 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 - 所有代码文件以 LF 结尾；不引入格式化器（Prettier/Biome），风格靠统一约定（与 kart 项目一致）
 - UI 文案英文、颜色只用语义 kind 色板 + `--vscode-*` 主题变量（亮/暗/高对比都要正常）
 - webview 视觉验证：`python3 -m http.server 8123` 后访问 `test/harness.html` 与 `test/diff-harness.html`（内置 --vscode-* 变量与 mock 数据，mock 文件已 gitignore）
-- 提交信息用中文 Conventional Commits（`feat:` / `chore:` …），参照 git log 既有风格
+- 提交信息用中文 Conventional Commits（`feat:` / `chore:` …）：标题一行说清「什么问题 → 怎么修的」（feat 说做了什么），独立可读；不写审核轮次编号（N1-N4 / P1-P6 / 复审N轮 / 收口），不引用 commit hash——重写历史即失真，审核记录走 docs/ 且不入库。body 分点写现象 / 根因 / 修法，实测数据（行数、字节对账）保留
