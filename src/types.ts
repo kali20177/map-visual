@@ -205,7 +205,10 @@ export interface PersistedViewState {
     view: 'list' | 'treemap';
     /** Treemap drill-down, so a reload does not drop you back at the top level. */
     treemapGroupKey: string | null;
-    /** Column widths in fr units. */
+    /**
+     * Column widths in fr units, in display order — the order is part of the
+     * schema: v1 stored widths for the pre-reorder column sequence.
+     */
     cols: number[];
     scrollTop: number;
     /** Indices into the rendered row list (only meaningful for `symbolCount`). */
@@ -214,8 +217,8 @@ export interface PersistedViewState {
     symbolCount: number;
 }
 
-/** Current `PersistedViewState.v`. */
-export const VIEW_STATE_VERSION = 1;
+/** Current `PersistedViewState.v`. v2 reordered the table columns. */
+export const VIEW_STATE_VERSION = 2;
 
 // ── Map Diff (M5) ──
 // Shared diff contract: computed in the worker (analysis/diff.ts), consumed

@@ -33,11 +33,21 @@ declare function acquireVsCodeApi(): {
 const vscode = acquireVsCodeApi();
 const ROW_H = 24;
 const OVERSCAN = 10;
-/** column widths in fr units — must match the `--mv-cols` default in main.css */
-const DEFAULT_COLS = [6.8, 33, 5.6, 23.5, 23.4, 7.7];
+/**
+ * Column widths in fr units, in display order — must match the `--mv-cols`
+ * default in main.css. Address and Size hold fixed-width data ("0x08001234",
+ * "512.3 K"), so the slack goes to Symbol, the only truly flexible column.
+ */
+const DEFAULT_COLS = [7.2, 3.8, 37, 4.6, 23.5, 23.4];
+
+/**
+ * Hard pixel floors, in display order: `applyCols` emits minmax() tracks so a
+ * narrow panel squeezes the flexible text columns first and never ellipsizes
+ * the fixed-width Address / Size data. Keep in sync with DEFAULT_COLS.
+ */
+const COL_MIN_PX = [78, 52, 40, 44, 40, 40];
 const COL_GAP = 12;
 const COL_PAD = 24; // .mv-thead horizontal padding
-const MIN_COL_PX = 40;
 
 const KIND_ORDER: SymbolKind[] = ['code', 'rodata', 'data', 'bss', 'pad', 'other', 'meta'];
 // kinds that occupy flash/ram storage; `meta` is non-alloc annotation data
@@ -323,9 +333,21 @@ function persist(): void {
     post({ type: 'persistView', state: payload });
 }
 
-/** Column widths live in one CSS variable consumed by both header and rows. */
+/**
+ * Column widths live in one CSS variable consumed by both header and rows.
+ * Each track is a minmax(): the fr value scales with the panel while the pixel
+ * floor keeps fixed-width data (addresses, sizes) intact on narrow panels.
+ */
 function applyCols(): void {
-    document.documentElement.style.setProperty('--mv-cols', state.cols.map((c) => `${c.toFixed(2)}fr`).join(' '));
+    const tracks = state.cols.map((c, i) => `minmax(${COL_MIN_PX[i]}px, ${c.toFixed(2)}fr)`);
+    document.documentElement.style.setProperty('--mv-cols', tracks.join(' '));
+}
+
+/** Discard dragged widths and go back to the shipped layout. */
+function resetCols(): void {
+    state.cols = [...DEFAULT_COLS];
+    applyCols();
+    persist();
 }
 
 // ---- rendering ----
@@ -344,8 +366,8 @@ const COLUMN_LABELS: Record<SortKey, string> = {
     addr: 'Address',
 };
 
-/** Display order — narrower columns last, so width trades stay natural. */
-const COLUMN_ORDER: SortKey[] = ['size', 'name', 'kind', 'section', 'object', 'addr'];
+/** Display order — the fixed-width data columns lead, flexible text follows. */
+const COLUMN_ORDER: SortKey[] = ['addr', 'size', 'name', 'kind', 'section', 'object'];
 
 /**
  * Header text of a column. The Address column names the address it currently
@@ -583,6 +605,7 @@ function renderWindow(): void {
             html += `
         <div class="mv-row mv-datarow k-${sym.kind}${sym.status === 'discarded' ? ' discarded' : ''}${state.selected.has(i) ? ' mv-selected' : ''}" data-i="${i}" style="top:${top}px" tabindex="0"
              title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}" aria-label="${escapeAttr(`${display}, ${formatBytes(sym.size)}, ${sym.section}`)}">
+          <div class="mv-td mv-mono mv-td-addr">${formatAddr(displayAddr(sym, state.ui.showLma))}</div>
           <div class="mv-td mv-td-size" title="0x${sym.size.toString(16)} (${sym.size} B)">${formatBytes(sym.size)}</div>
           <div class="mv-td mv-td-symbol" title="${escapeAttr(secondary ? `${display}  (${secondary})` : display)}">
             <span class="mv-kindbar k-${sym.kind}"></span>
@@ -592,7 +615,6 @@ function renderWindow(): void {
           <div class="mv-td"><span class="mv-kindchip k-${sym.kind}">${sym.kind}</span></div>
           <div class="mv-td mv-mono mv-td-section" title="${escapeAttr(sym.section)}">${highlightHtml(sym.section, terms)}</div>
           <div class="mv-td mv-td-object" title="${escapeAttr(sym.object)}">${sym.isLto ? '<span class="mv-lto">LTO</span>' : ''}${objLabel}</div>
-          <div class="mv-td mv-mono mv-td-addr">${formatAddr(displayAddr(sym, state.ui.showLma))}</div>
         </div>`;
         }
     }
@@ -954,7 +976,19 @@ function colDragUnit(): number {
     return Math.max(0.5, (theadEl.clientWidth - COL_PAD - gaps) / total);
 }
 
+// right-click on the header offers the layout escape hatch; rows have their
+// own menu, so the two never mix
+theadEl.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    openMenu(ev.clientX, ev.clientY, [{ label: tr('Reset column widths'), action: resetCols }]);
+});
+
 theadEl.addEventListener('mousedown', (ev) => {
+    // non-primary buttons must not start a drag — right-click opens the
+    // header's own context menu (reset column widths)
+    if (ev.button !== 0) {
+        return;
+    }
     const grip = (ev.target as HTMLElement).closest('.mv-colresize') as HTMLElement | null;
     if (!grip) {
         return;
@@ -969,12 +1003,13 @@ theadEl.addEventListener('mousedown', (ev) => {
             return;
         }
         // width trades between the two neighbours, so the table keeps filling
-        // the panel no matter how narrow it gets
+        // the panel no matter how narrow it gets — down to each column's floor
         const delta = (e.clientX - colDrag.startX) / colDrag.pxPerFr;
-        const min = MIN_COL_PX / colDrag.pxPerFr;
+        const leftMin = COL_MIN_PX[colDrag.col] / colDrag.pxPerFr;
+        const rightMin = COL_MIN_PX[colDrag.col + 1] / colDrag.pxPerFr;
         const left = colDrag.startCols[colDrag.col] + delta;
         const right = colDrag.startCols[colDrag.col + 1] - delta;
-        if (left < min || right < min) {
+        if (left < leftMin || right < rightMin) {
             return;
         }
         const next = [...colDrag.startCols];

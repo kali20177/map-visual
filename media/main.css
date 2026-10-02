@@ -10,9 +10,12 @@
     --mv-meta: #9d9da3;
     --mv-flash: #4a90d9;
     --mv-ram: #e8943a;
-    /* column widths as fr units: proportional, so the table always fits the
-       panel (percentages would overflow once the 12px column gaps are added) */
-    --mv-cols: 6.8fr 33fr 5.6fr 23.5fr 23.4fr 7.7fr;
+    /* column widths as minmax() tracks — the fr value scales with the panel,
+       the px floor keeps fixed-width data (address, size) intact when narrow
+       (percentages would overflow once the 12px column gaps are added); must
+       match DEFAULT_COLS / COL_MIN_PX in src/webview/main.ts */
+    --mv-cols: minmax(78px, 7.2fr) minmax(52px, 3.8fr) minmax(40px, 37fr) minmax(44px, 4.6fr)
+        minmax(40px, 23.5fr) minmax(40px, 23.4fr);
 }
 
 body.vscode-light {
@@ -762,7 +765,7 @@ mark.mv-hit {
 }
 
 .mv-td-addr {
-    text-align: right;
+    /* first column: fixed-width hex hugs the row start instead of right edge */
     color: var(--vscode-descriptionForeground);
 }
 

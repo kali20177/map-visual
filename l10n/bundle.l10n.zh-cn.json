@@ -115,6 +115,7 @@
   "Exclude object  {0}": "排除目标文件  {0}",
   "Export selected rows as CSV ({0})": "把选中的 {0} 行导出为 CSV",
   "Go to source": "跳转到源码",
+  "Reset column widths": "恢复默认列宽",
   "No demangled names in this parse — enable \"mapvisual.demangle\" in settings and reopen": "本次解析没有 demangled 名 —— 请在设置里启用 \"mapvisual.demangle\" 后重新打开",
   "Parsing…": "解析中…",
   "Raw line not found — the map file may have changed since parsing": "找不到该原始行 —— map 文件可能在解析之后发生了变化",
