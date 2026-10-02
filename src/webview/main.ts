@@ -232,7 +232,7 @@ root.innerHTML = `
     <button id="mv-system" class="mv-toggle" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
     <button id="mv-discarded" class="mv-toggle" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
     <button id="mv-view" class="mv-toggle" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
-    <button id="mv-split" class="mv-toggle" title="${escapeAttr(tr('Show the raw map file beside this view — click a symbol row to jump to its line'))}">${escapeHtml(tr('Raw'))}</button>
+    <button id="mv-split" class="mv-toggle">${escapeHtml(tr('Raw'))}</button>
     <button id="mv-export" class="mv-btn" title="${escapeAttr(tr('Export the filtered rows as CSV'))}">CSV</button>
   </div>
   <div class="mv-body">
@@ -853,7 +853,7 @@ function syncSearchChrome(): void {
     searchWrapEl.classList.toggle('has-text', searchEl.value.length > 0);
 }
 
-/** The Raw button doubles as the hint for how a row gets revealed. */
+/** The Raw button doubles as the hint for how a row gets revealed; the shell template leaves the title off so this stays the single copy. */
 function updateClickHint(): void {
     splitEl.title = tr('Show the raw map file beside this view — double-click a row (or Alt+click / Enter) to jump to its line');
 }

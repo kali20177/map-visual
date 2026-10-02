@@ -62,7 +62,6 @@
   "Removed": "已移除",
   "Toggle list / treemap view": "切换列表 / 树图视图",
   "Treemap": "树图",
-  "Show the raw map file beside this view — click a symbol row to jump to its line": "在本视图旁显示原始 map 文件 —— 单击符号行可跳转到对应行",
   "Raw": "原文",
   "Export the filtered rows as CSV": "把过滤后的行导出为 CSV",
   "Size": "大小",

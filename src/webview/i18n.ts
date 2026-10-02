@@ -19,6 +19,10 @@ export type Bundle = Record<string, string>;
 /**
  * Lookup + `{0}` interpolation, kept free of the DOM so it can be unit tested
  * (`vitest` runs in a node environment, without `document`).
+ *
+ * The `{n}` contract must stay identical to parser/warnings.ts `render` — both
+ * fill the English templates, and the layer boundary forbids sharing one
+ * implementation.
  */
 export function makeT(bundle: Bundle): (message: string, ...args: Arg[]) => string {
     return (message, ...args) =>

@@ -17,7 +17,11 @@ interface Entry {
     firstLine?: number;
 }
 
-/** Fill `{0}`… from `params`; placeholders without a value are left as-is. */
+/**
+ * Fill `{0}`… from `params`; placeholders without a value are left as-is.
+ * Same `{n}` contract as webview/i18n.ts `makeT` — the layer boundary forbids
+ * sharing one implementation.
+ */
 function render(template: string, params?: Array<string | number>): string {
     if (!params || params.length === 0) {
         return template;
