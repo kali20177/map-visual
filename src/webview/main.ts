@@ -1,6 +1,6 @@
 import type { MapDocument, ParseWarning, PersistedViewState, SymbolKind, SymbolRecord } from '../types';
 import { GROUP_KEYS, SORT_KEYS, VIEW_STATE_VERSION, WARNING_TEMPLATES } from '../types';
-import type { ClickAction, HostToWebview, WebviewToHost } from '../protocol';
+import type { HostToWebview, WebviewToHost } from '../protocol';
 import { tr } from './i18n';
 import {
     DEFAULT_UI_STATE,
@@ -51,10 +51,8 @@ interface AppState {
     treemapGroupKey: string | null;
     /** the parse produced demangled names — the C++ toggle is a no-op otherwise */
     demangleAvailable: boolean;
-    /** indices into `visible` of ctrl/cmd-clicked rows, exported via the context menu */
+    /** indices into `visible` of the selected rows, exported via the context menu */
     selected: Set<number>;
-    /** what a plain row click does (mapvisual.clickAction); Alt+click does the other */
-    clickAction: ClickAction;
     /** last row a Shift selection extended from */
     anchor: number | null;
     /** column widths in fr units, one per table column */
@@ -180,7 +178,6 @@ const state: AppState = {
     treemapGroupKey: saved.treemapGroupKey,
     demangleAvailable: false,
     selected: new Set(),
-    clickAction: 'locate',
     anchor: null,
     cols: saved.cols,
     docEpoch: 0,
@@ -764,20 +761,6 @@ function locateRow(sym: SymbolRecord): void {
     post({ type: 'revealRawLine', line: sym.line, name: sym.name });
 }
 
-/**
- * A plain click runs the configured action, Alt+click runs the other one —
- * neither gesture is ever unreachable. Double-click is handled separately and
- * always locates.
- */
-function runRowAction(row: RowView, alt: boolean): void {
-    const action = alt ? (state.clickAction === 'locate' ? 'copy' : 'locate') : state.clickAction;
-    if (action === 'copy') {
-        copyText(row.display);
-        return;
-    }
-    locateRow(row.sym);
-}
-
 function toggleSelected(i: number): void {
     if (state.selected.has(i)) {
         state.selected.delete(i);
@@ -794,6 +777,23 @@ function extendSelectionTo(i: number): void {
             state.selected.add(k);
         }
     }
+}
+
+/**
+ * Replace the selection with the rows between two indices, group headers aside.
+ *
+ * A drag repaints from its anchor on every move, so the range has to shrink
+ * again when the pointer comes back — `extendSelectionTo` only ever adds, which
+ * is what Shift+click wants and the opposite of what dragging wants.
+ */
+function selectRangeBetween(a: number, b: number): void {
+    const next = new Set<number>();
+    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) {
+        if (visible[k]?.row) {
+            next.add(k);
+        }
+    }
+    state.selected = next;
 }
 
 /** Repaint after a selection change — the selection is part of the stored view. */
@@ -814,10 +814,7 @@ function syncSearchChrome(): void {
 
 /** The Raw button doubles as the hint for how a row gets revealed. */
 function updateClickHint(): void {
-    splitEl.title =
-        state.clickAction === 'locate'
-            ? tr('Show the raw map file beside this view — a plain click on a row jumps to its line')
-            : tr('Show the raw map file beside this view — double-click a row (or Alt+click) to jump to its line');
+    splitEl.title = tr('Show the raw map file beside this view — double-click a row (or Alt+click / Enter) to jump to its line');
 }
 
 /** Push restored state into the DOM controls (the shell is built empty). */
@@ -1007,6 +1004,8 @@ tbodyEl.addEventListener('scroll', () => {
         return;
     }
     renderWindow();
+    // the menu is anchored to where a row was on screen, which the scroll just moved
+    closeMenu();
     listScrollTop = tbodyEl.scrollTop;
     // the offset is part of the restored view, but a fast scroll must not
     // trigger a write per frame
@@ -1016,6 +1015,114 @@ tbodyEl.addEventListener('scroll', () => {
             persist();
         }, 250);
     }
+});
+
+// ---- row selection: press, drag, modifiers ----
+//
+// Rows select the way a file list works: the press picks the row under the
+// pointer, dragging over more rows extends the range from where the press
+// started, and the modifiers narrow that down (Ctrl/Cmd toggles one row, Shift
+// extends from the last anchor).
+//
+// Picking a row has no other side effect on purpose. Revealing a line is
+// double-click, Alt+click or Enter; copying lives in the row context menu —
+// clicking around never fills the clipboard.
+
+/** Live press-drag: the row the press started on, plus the pointer's last Y. */
+let dragSelect: { anchor: number; lastY: number } | null = null;
+let dragScrollRaf: number | null = null;
+
+/** Pointer distance from an edge at which a drag starts scrolling the list. */
+const DRAG_EDGE_PX = 24;
+const DRAG_SCROLL_STEP = 14;
+
+/**
+ * Index of the row under a viewport Y; rows are ROW_H tall and laid out in
+ * order, so this is arithmetic.
+ *
+ * A Y past the viewport clamps to the first/last *visible* row rather than to
+ * the ends of the list: holding the pointer below the list then extends the
+ * selection in step with the auto-scroll, instead of jumping to the last symbol
+ * the moment the pointer leaves the box.
+ */
+function rowIndexAtY(clientY: number): number {
+    const rect = tbodyEl.getBoundingClientRect();
+    const viewportY = Math.max(0, Math.min(tbodyEl.clientHeight - 1, clientY - rect.top));
+    return Math.max(0, Math.min(visible.length - 1, Math.floor((viewportY + tbodyEl.scrollTop) / ROW_H)));
+}
+
+/** Pixels to scroll per frame while the pointer is held past an edge, 0 while it is inside. */
+function edgeScrollStep(clientY: number): number {
+    const rect = tbodyEl.getBoundingClientRect();
+    if (clientY < rect.top + DRAG_EDGE_PX) {
+        return -DRAG_SCROLL_STEP;
+    }
+    return clientY > rect.bottom - DRAG_EDGE_PX ? DRAG_SCROLL_STEP : 0;
+}
+
+/** Keep scrolling — and re-selecting — for as long as the pointer stays past the edge. */
+function dragScrollTick(): void {
+    dragScrollRaf = null;
+    if (!dragSelect) {
+        return;
+    }
+    const step = edgeScrollStep(dragSelect.lastY);
+    if (step === 0) {
+        return;
+    }
+    tbodyEl.scrollTop += step;
+    selectRangeBetween(dragSelect.anchor, rowIndexAtY(dragSelect.lastY));
+    renderWindow();
+    dragScrollRaf = requestAnimationFrame(dragScrollTick);
+}
+
+function onDragMove(ev: MouseEvent): void {
+    if (!dragSelect) {
+        return;
+    }
+    dragSelect.lastY = ev.clientY;
+    selectRangeBetween(dragSelect.anchor, rowIndexAtY(ev.clientY));
+    // repaint only: a drag would otherwise write the stored view on every frame
+    renderWindow();
+    if (dragScrollRaf === null && edgeScrollStep(ev.clientY) !== 0) {
+        dragScrollRaf = requestAnimationFrame(dragScrollTick);
+    }
+}
+
+/** End a press-drag — the single point where the dragged selection reaches the host. */
+function onDragUp(): void {
+    document.removeEventListener('mousemove', onDragMove);
+    if (dragScrollRaf !== null) {
+        cancelAnimationFrame(dragScrollRaf);
+        dragScrollRaf = null;
+    }
+    const wasDragging = dragSelect !== null;
+    dragSelect = null;
+    if (wasDragging) {
+        persist();
+    }
+}
+
+tbodyEl.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0 || state.view !== 'list') {
+        return;
+    }
+    const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
+    // the modifier gestures belong to the click handler, and none of them drags
+    if (!rowEl || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) {
+        return;
+    }
+    const i = parseInt(rowEl.dataset.i!, 10);
+    if (!visible[i]?.row) {
+        return;
+    }
+    rowEl.focus(); // explicit: the press must not turn into a text selection
+    state.anchor = i;
+    state.selected = new Set([i]);
+    renderWindow();
+    dragSelect = { anchor: i, lastY: ev.clientY };
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', onDragUp, { once: true });
 });
 
 tbodyEl.addEventListener('click', (ev) => {
@@ -1054,8 +1161,16 @@ tbodyEl.addEventListener('click', (ev) => {
         renderSelection();
         return;
     }
-    state.anchor = i;
-    runRowAction(entry.row, ev.altKey);
+    if (ev.altKey) {
+        locateRow(entry.row.sym);
+        return;
+    }
+    // `detail === 0` means the keyboard sent this (`Enter` on a focused row),
+    // which is the mouse's double-click; a real plain click has already been
+    // handled by the mousedown listener above.
+    if (ev.detail === 0) {
+        locateRow(entry.row.sym);
+    }
 });
 
 // Double-click is the universal "where is this?" gesture: it locates the row
@@ -1094,6 +1209,9 @@ function openMenu(x: number, y: number, items: Array<{ label: string; action: ()
     const rect = menuEl.getBoundingClientRect();
     menuEl.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
     menuEl.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+    // the document-wide press handler closes the menu; a press *inside* it is
+    // the menu's own business, and has to survive until the click lands on an item
+    menuEl.addEventListener('mousedown', (ev) => ev.stopPropagation());
     menuEl.addEventListener('click', (ev) => {
         const item = (ev.target as HTMLElement).closest('[data-i]') as HTMLElement | null;
         if (item) {
@@ -1123,14 +1241,88 @@ function truncateMenuLabel(s: string | null): string {
     return s.length > 34 ? s.slice(0, 31) + '…' : s;
 }
 
-function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
-    const sym = entry.row.sym;
-    const display = entry.row.display;
+/** Rows of the current selection, in on-screen order. */
+function selectedRows(): RowView[] {
+    return [...state.selected]
+        .sort((a, b) => a - b)
+        .map((i) => visible[i]?.row)
+        .filter((r): r is RowView => r != null);
+}
+
+/** The tab-separated "full row" text — the same shape `Copy full row` puts on the clipboard. */
+function fullRowText(row: RowView): string {
+    const sym = row.sym;
+    return `${row.display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`;
+}
+
+function exportRows(rows: RowView[]): void {
+    if (rows.length === 0 || !state.doc) {
+        return;
+    }
+    post({
+        type: 'exportCsv',
+        csv: toCsv(rows, state.ui.demangle),
+        suggestedName: baseDisplay(state.doc.file).replace(/\.map$/i, '') + '-selection.csv',
+        file: state.doc.file,
+    });
+}
+
+/** Copy a multi-row payload, reporting how many rows went rather than the text itself. */
+function copyRows(text: string, count: number): void {
+    void navigator.clipboard?.writeText(text).then(() => toast(tr('Copied {0} rows', count)));
+}
+
+/**
+ * Menu for a selection of more than one row.
+ *
+ * The per-row actions (reveal, filter by this object, go to source) all describe
+ * a single symbol, so they are replaced rather than repeated — the menu would
+ * otherwise act on whichever row happened to be under the pointer while showing
+ * labels that read like they cover the whole selection. Narrowing back to one
+ * row is a single click away.
+ */
+function openSelectionMenu(x: number, y: number): void {
+    const rows = selectedRows();
+    const count = rows.length;
+    openMenu(x, y, [
+        { label: tr('Copy {0} demangled names', count), action: () => copyRows(rows.map((r) => r.display).join('\n'), count) },
+        { label: tr('Copy {0} mangled names', count), action: () => copyRows(rows.map((r) => r.sym.mangled ?? r.sym.name).join('\n'), count) },
+        { label: tr('Copy {0} full rows', count), action: () => copyRows(rows.map(fullRowText).join('\n'), count) },
+        { label: tr('Export selected rows as CSV ({0})', count), action: () => exportRows(rows) },
+        {
+            label: tr('Clear selection'),
+            action: () => {
+                clearSelection();
+                renderSelection();
+            },
+        },
+    ]);
+}
+
+function openRowMenu(x: number, y: number, index: number): void {
+    const entry = visible[index];
+    if (!entry?.row) {
+        return;
+    }
+    // Right-clicking outside the selection re-targets it, the way a file list
+    // does, so the menu always describes what it is about to act on.
+    if (!state.selected.has(index)) {
+        state.anchor = index;
+        state.selected = new Set([index]);
+        renderSelection();
+    }
+    if (state.selected.size > 1) {
+        openSelectionMenu(x, y);
+        return;
+    }
+    const { row } = entry;
+    const sym = row.sym;
+    const display = row.display;
     const objBase = baseDisplay(sym.member ?? sym.object);
     const items: Array<{ label: string; action: () => void }> = [
         { label: tr('Copy demangled  {0}', truncateMenuLabel(display)), action: () => copyText(display) },
         { label: tr('Copy mangled  {0}', truncateMenuLabel(sym.mangled ?? sym.name)), action: () => copyText(sym.mangled ?? sym.name) },
-        { label: tr('Copy full row'), action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
+        { label: tr('Copy full row'), action: () => copyText(fullRowText(row)) },
         { label: tr('Reveal in the raw map'), action: () => locateRow(sym) },
     ];
     // the guards keep an empty value from turning "filter by" into "clear the
@@ -1146,16 +1338,7 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
         items.push({ label: tr('Exclude object  {0}', truncateMenuLabel(objBase)), action: () => addFilterTerm(`-${quoteTerm(objBase)}`) });
     }
     if (state.selected.size > 0) {
-        items.push({
-            label: tr('Export selected rows as CSV ({0})', state.selected.size),
-            action: () => {
-                const rows = [...state.selected].sort((a, b) => a - b).map((i) => visible[i]?.row).filter((r): r is RowView => r != null);
-                if (rows.length === 0 || !state.doc) {
-                    return;
-                }
-                post({ type: 'exportCsv', csv: toCsv(rows, state.ui.demangle), suggestedName: baseDisplay(state.doc.file).replace(/\.map$/i, '') + '-selection.csv', file: state.doc.file });
-            },
-        });
+        items.push({ label: tr('Export selected rows as CSV ({0})', state.selected.size), action: () => exportRows(selectedRows()) });
     }
     items.push({ label: tr('Go to source'), action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) });
     openMenu(x, y, items);
@@ -1185,15 +1368,14 @@ tbodyEl.addEventListener('contextmenu', (ev) => {
         return;
     }
     const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
-    if (!rowEl) {
-        return;
-    }
-    const entry = rowEntryAt(rowEl);
-    if (entry) {
-        openRowMenu(ev.clientX, ev.clientY, entry);
+    if (rowEl) {
+        openRowMenu(ev.clientX, ev.clientY, parseInt(rowEl.dataset.i!, 10));
     }
 });
-document.addEventListener('click', closeMenu);
+// Close on any press, not on `click`: pressing a row repaints the row list, and
+// a gesture whose mousedown target was replaced never produces a click — the
+// menu would stay up until something else closed it.
+document.addEventListener('mousedown', closeMenu);
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') {
         closeMenu();
@@ -1278,11 +1460,8 @@ tbodyEl.addEventListener('keydown', (ev) => {
         rowEl.click();
     } else if ((ev.key === 'F10' && ev.shiftKey) || ev.key === 'ContextMenu') {
         ev.preventDefault();
-        const entry = rowEntryAt(rowEl);
-        if (entry) {
-            const rect = rowEl.getBoundingClientRect();
-            openRowMenu(rect.left + 8, rect.top + rect.height / 2, entry);
-        }
+        const rect = rowEl.getBoundingClientRect();
+        openRowMenu(rect.left + 8, rect.top + rect.height / 2, parseInt(rowEl.dataset.i!, 10));
     }
 });
 
@@ -1379,9 +1558,6 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         formatEl.textContent = msg.doc.format;
         syncToggles();
         renderAll();
-    } else if (msg.type === 'settings') {
-        state.clickAction = msg.clickAction === 'copy' ? 'copy' : 'locate';
-        updateClickHint();
     } else if (msg.type === 'parseError') {
         showError(msg.error);
     } else if (msg.type === 'parseCancelled') {

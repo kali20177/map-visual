@@ -562,6 +562,8 @@ body.mv-col-dragging {
     padding: 0 12px;
     font-size: 12px;
     cursor: default;
+    /* rows are dragged over to select a range — a text selection would fight it */
+    user-select: none;
     border-left: 2px solid transparent;
 }
 

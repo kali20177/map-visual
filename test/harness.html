@@ -99,7 +99,6 @@
             setTimeout(function () {
               // the host replays its stored view state before the document
               window.dispatchEvent(new MessageEvent('message', { data: { type: 'viewState', state: restored } }));
-              window.dispatchEvent(new MessageEvent('message', { data: { type: 'settings', clickAction: 'locate' } }));
               window.dispatchEvent(new MessageEvent('message', { data: { type: 'parseResult', doc: doc } }));
             }, 120);
           });

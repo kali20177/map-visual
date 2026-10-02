@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { MapDocument } from './types';
-import type { ClickAction, ParseRequest, WebviewToHost } from './protocol';
+import type { ParseRequest, WebviewToHost } from './protocol';
 import { ParseWorkerClient } from './workerClient';
 import { progressText, l10nBundleScript } from './hostI18n';
 import { sourceGlobPatterns, rankCandidates } from './sourceMatch';
@@ -23,11 +23,6 @@ function readSettings(): ParseSettings {
         demangle: cfg.get<boolean>('demangle', true),
         formatOverride: cfg.get<'auto' | 'gnu-ld' | 'lld'>('formatOverride', 'auto'),
     };
-}
-
-/** View-only preference: shipped to the webview as a `settings` message, never triggers a re-parse. */
-function readClickAction(): ClickAction {
-    return vscode.workspace.getConfiguration('mapvisual').get<ClickAction>('clickAction', 'locate');
 }
 
 interface PanelState {
@@ -64,12 +59,6 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             this.updateStatusBar();
         });
         vscode.workspace.onDidChangeConfiguration((e) => {
-            // view-only preferences must not buy a fresh multi-MB parse
-            if (e.affectsConfiguration('mapvisual.clickAction')) {
-                for (const panel of this.panels.keys()) {
-                    void panel.webview.postMessage({ type: 'settings', clickAction: readClickAction() });
-                }
-            }
             if (e.affectsConfiguration('mapvisual.demangle') || e.affectsConfiguration('mapvisual.formatOverride')) {
                 // Re-parse in place so panels keep their view state (sort/filter/scroll).
                 for (const state of [...this.panels.values()]) {
@@ -240,7 +229,6 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                     // a webview reload re-runs the script with fresh state —
                     // re-sync the split toggle with the host's panel state
                     void webview.postMessage({ type: 'splitChanged', on: state?.splitOn === true });
-                    void webview.postMessage({ type: 'settings', clickAction: readClickAction() });
                     // a fresh webview gets a fresh attempt (a failed parse should
                     // not leave the reloaded tab empty)
                     parseStarted = false;

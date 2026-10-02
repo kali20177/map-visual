@@ -33,15 +33,8 @@ export type WorkerToHost =
     | { type: 'diffResult'; diff: DiffResult }
     | { type: 'error'; error: { kind: 'notfound' | 'json' | 'unsupported' | 'unknown' | 'io'; message: string } };
 
-/**
- * What a plain click on a symbol row does (`mapvisual.clickAction`).
- * Alt+click always performs the other one; double-click always locates.
- */
-export type ClickAction = 'locate' | 'copy';
-
 /** extension host → webview */
 export type HostToWebview =
-    | { type: 'settings'; clickAction: ClickAction }
     /** view state stored for this map file (workspaceState), replayed on every webview start */
     | { type: 'viewState'; state: PersistedViewState | null }
     | { type: 'parseResult'; doc: MapDocument }

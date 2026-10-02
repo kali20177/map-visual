@@ -107,19 +107,6 @@
           ],
           "default": "auto",
           "description": "%configuration.formatOverride.description%"
-        },
-        "mapvisual.clickAction": {
-          "type": "string",
-          "enum": [
-            "locate",
-            "copy"
-          ],
-          "enumDescriptions": [
-            "%configuration.clickAction.locate%",
-            "%configuration.clickAction.copy%"
-          ],
-          "default": "locate",
-          "description": "%configuration.clickAction.description%"
         }
       }
     }

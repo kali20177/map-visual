@@ -20,7 +20,7 @@ A linker map records where object files are mapped into memory, how common symbo
 - **Symbol-level list**: sort by size, name, kind, section, object or address; group by object, library, output section, section kind or directory; filter by text, kind or minimum size; hide compiler and runtime objects; see what `--gc-sections` removed. Virtual scrolling keeps multi-megabyte maps fast.
 - **Filtering that keeps up**: whitespace-separated terms are combined, `-word` excludes, and `"a phrase"` stays one term for names and paths with spaces. Matches are highlighted in the list and counted in the toolbar, so an empty result says so instead of looking broken.
 - **Memory usage**: region usage bars, section-kind composition and the largest symbols in the side panel, plus a status-bar readout for the active map.
-- **Locate in raw map**: click any symbol row and MapVisual opens the raw map beside the view with that line highlighted; `Alt+click` copies instead, and the `mapvisual.clickAction` setting flips those two. Double-click always reveals the raw line, whatever the setting says. Copy actions live in the row context menu.
+- **Locate in raw map**: double-click a symbol row — or `Alt+click`, or press `Enter` on a focused row — and MapVisual opens the raw map beside the view with that line highlighted. Copy actions live in the row context menu.
 - **Treemap**: switch the list to an area-proportional treemap and drill into any group.
 - **Map diff**: compare two builds symbol by symbol (added / removed / changed), with Flash and RAM totals and CSV export.
 - **Built-in C++ demangling**: the extension bundles a WASM demangler, so you need no toolchain or configuration. Symbols recovered from section names (`.text._ZN…`) are demangled too, and both the mangled and demangled forms are searchable.
@@ -40,7 +40,7 @@ While reading a map:
 
 - **Toolbar**: `C++` demangling, `System` (hide crt/libgcc/libc), `Removed` (gc-sectioned symbols), `Treemap`, `Raw` (open the raw map beside), `CSV` export. The filter box takes `-word` to exclude and `"a phrase"` to keep a name with spaces together.
 - **Columns**: drag the divider in a header to resize it — neighbouring columns trade width, so the table keeps filling the panel.
-- **Rows**: a plain click runs the configured click action (locate, or copy with `mapvisual.clickAction`), `Alt+click` runs the other one, and double-click always reveals the raw line. `Shift+click` and `Shift+↑/↓` select a range, `Ctrl/Cmd+click` toggles single rows, `Ctrl/Cmd+A` selects everything visible — a selection exports through the row menu. Right-click opens the row menu: copy the demangled name, the mangled name or the whole row, reveal the raw line, filter by object or section, show only one kind, exclude an object, go to source.
+- **Rows**: a click selects a row, and dragging over rows selects that range the way a file list works — drag past the edge and the list scrolls on its own. `Alt+click` or double-click reveals the row's line in the raw map (`Enter` does too, on a focused row). `Shift+click` and `Shift+↑/↓` extend from the anchor, `Ctrl/Cmd+click` toggles single rows, `Ctrl/Cmd+A` selects everything visible — a selection exports through the row menu. Right-click opens the row menu: copy the demangled name, the mangled name or the whole row, reveal the raw line, filter by object or section, show only one kind, exclude an object, go to source. With more than one row selected the menu switches to batch actions (copy the names, copy the rows, export as CSV, clear the selection), and right-clicking a row outside the selection re-targets it first.
 - **View state is kept, per file**: filter, sort, grouping, collapsed groups, the treemap drill-down, column widths, scroll position and your row selection all come back when you switch tabs, and again when you close the file and reopen it later — even in a new window. Returning to a tab does not re-parse the map.
 - **Status bar**: Flash and RAM totals for the map you are looking at.
 
@@ -58,7 +58,6 @@ While reading a map:
 |---|---|---|
 | `mapvisual.demangle` | `true` | Demangle C++ symbol names (built-in WASM demangler). |
 | `mapvisual.formatOverride` | `auto` | Force the map format instead of auto-detection (`gnu-ld` / `lld`). |
-| `mapvisual.clickAction` | `locate` | What a plain row click does: `locate` reveals the line in the raw map, `copy` copies the displayed name. `Alt+click` always does the other one, double-click always locates. |
 
 ## Command line
 

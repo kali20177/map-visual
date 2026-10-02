@@ -5,8 +5,5 @@
   "command.reveal": "MapVisual: 显示 Map 视图",
   "command.openAsText": "MapVisual: 以文本打开",
   "configuration.demangle.description": "还原 C++ 符号名（内置 WASM demangler，无需工具链）。",
-  "configuration.formatOverride.description": "强制指定 map 文件格式，跳过自动检测。",
-  "configuration.clickAction.description": "在符号行上单击的行为。Alt+单击始终执行另一种操作；双击始终在原始 map 中定位该行。",
-  "configuration.clickAction.locate": "在原始 map 中定位该符号所在行（按需在视图旁打开文本面板）。",
-  "configuration.clickAction.copy": "把显示的符号名复制到剪贴板。"
+  "configuration.formatOverride.description": "强制指定 map 文件格式，跳过自动检测。"
 }
