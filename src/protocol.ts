@@ -51,7 +51,6 @@ export type WebviewToHost =
     | { type: 'persistView'; state: PersistedViewState }
     | { type: 'exportCsv'; csv: string; suggestedName: string; file?: string }
     | { type: 'openAsText' }
-    | { type: 'revealSource'; object: string; member: string | null }
     | { type: 'toggleSplit' }
     | { type: 'revealRawLine'; line: number; name: string };
 

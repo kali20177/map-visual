@@ -1399,7 +1399,6 @@ function openRowMenu(x: number, y: number, index: number): void {
     if (state.selected.size > 0) {
         items.push({ label: tr('Export selected rows as CSV ({0})', state.selected.size), action: () => exportRows(selectedRows()) });
     }
-    items.push({ label: tr('Go to source'), action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) });
     openMenu(x, y, items);
 }
 

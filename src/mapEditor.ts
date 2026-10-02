@@ -4,7 +4,6 @@ import type { MapDocument } from './types';
 import type { ParseRequest, WebviewToHost } from './protocol';
 import { ParseWorkerClient } from './workerClient';
 import { progressText, l10nBundleScript } from './hostI18n';
-import { sourceGlobPatterns, rankCandidates } from './sourceMatch';
 import { ViewStateStore } from './viewState';
 
 interface MapCustomDocument extends vscode.CustomDocument {
@@ -247,9 +246,6 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 case 'openAsText':
                     void vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', vscode.ViewColumn.Active);
                     break;
-                case 'revealSource':
-                    void this.revealSource(msg.object, msg.member);
-                    break;
                 case 'toggleSplit':
                     void this.toggleSplit(webviewPanel, document.uri);
                     break;
@@ -294,24 +290,6 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
     /** URI of the map shown in the focused custom editor, if any (commands run while a webview has focus). */
     activeMapUri(): vscode.Uri | undefined {
         return this.activePanel ? this.panels.get(this.activePanel)?.uri : undefined;
-    }
-
-    private async revealSource(object: string, member: string | null): Promise<void> {
-        const patterns = sourceGlobPatterns(object, member);
-        if (patterns.length === 0) {
-            void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: nothing to look for ("{0}")', object || member || '—'));
-            return;
-        }
-        const exclude = '**/{node_modules,.git,dist,out,build,release,DerivedData}/**';
-        for (const pattern of patterns) {
-            const found = await vscode.workspace.findFiles(pattern, exclude, 50);
-            if (found.length > 0) {
-                const best = rankCandidates(found.map((u) => u.fsPath))[0];
-                await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(best));
-                return;
-            }
-        }
-        void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: no source file found for "{0}" in this workspace', member ?? object));
     }
 
     /** View column of a visible plain-text tab showing `uri`, if any (the map's own custom editor tab does not count). */
