@@ -191,6 +191,8 @@ export interface UiState {
     minSize: number;
     groupBy: GroupBy;
     demangle: boolean;
+    /** Address column shows the load address (LMA) instead of the runtime address (VMA). */
+    showLma: boolean;
     hideSystem: boolean;
     showDiscarded: boolean;
 }

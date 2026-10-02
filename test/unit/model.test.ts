@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     DEFAULT_UI_STATE,
     buildView,
+    displayAddr,
     filterAndSort,
     flattenItems,
     formatAddr,
@@ -230,5 +231,28 @@ describe('formatting + csv', () => {
         const csv = toCsv([{ sym: sym({ name: 'weird,name', object: 'a"b.o' }), display: 'weird,name', secondary: null }], true);
         expect(csv.split('\n')[1]).toContain('"weird,name"');
         expect(csv.split('\n')[1]).toContain('"a""b.o"');
+    });
+
+    it('shows the load address only when the LMA toggle asks for it', () => {
+        const data = sym({ addr: 0x20000034, lma: 0x08001038 });
+        const bss = sym({ addr: 0x20000100, lma: null });
+        expect(displayAddr(data, false)).toBe(0x20000034);
+        expect(displayAddr(data, true)).toBe(0x08001038);
+        // rows without a load address keep showing their runtime address
+        expect(displayAddr(bss, true)).toBe(0x20000100);
+    });
+
+    it('sorts the address column by the address it displays', () => {
+        const rows = filterAndSort(doc([
+            sym({ name: 'runtime-high', addr: 0x20000000, lma: 0x08000000 }),
+            sym({ name: 'runtime-low', addr: 0x10000000, lma: 0x09000000 }),
+        ]), ui({ sortKey: 'addr', sortDir: 'asc', showLma: false }));
+        expect(rows.map((r) => r.sym.name)).toEqual(['runtime-low', 'runtime-high']);
+
+        const byLma = filterAndSort(doc([
+            sym({ name: 'runtime-high', addr: 0x20000000, lma: 0x08000000 }),
+            sym({ name: 'runtime-low', addr: 0x10000000, lma: 0x09000000 }),
+        ]), ui({ sortKey: 'addr', sortDir: 'asc', showLma: true }));
+        expect(byLma.map((r) => r.sym.name)).toEqual(['runtime-high', 'runtime-low']);
     });
 });

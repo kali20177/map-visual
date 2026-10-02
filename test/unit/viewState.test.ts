@@ -26,6 +26,7 @@ const ui: UiState = {
     minSize: 64,
     groupBy: 'outSection',
     demangle: true,
+    showLma: false,
     hideSystem: false,
     showDiscarded: false,
 };

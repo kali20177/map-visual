@@ -22,6 +22,7 @@ export const DEFAULT_UI_STATE: UiState = {
     minSize: 0,
     groupBy: 'none',
     demangle: true,
+    showLma: false,
     hideSystem: false,
     showDiscarded: false,
 };
@@ -140,14 +141,15 @@ function matchesFilter(sym: SymbolRecord, ui: UiState, terms: FilterTerms): bool
     return true;
 }
 
-function sortKeyOf(sym: SymbolRecord, key: SortKey, demangle: boolean): string | number {
+function sortKeyOf(sym: SymbolRecord, key: SortKey, ui: UiState): string | number {
     switch (key) {
         case 'size':
             return sym.size;
         case 'addr':
-            return sym.addr;
+            // sorts by whatever the column shows, so the order never contradicts the numbers on screen
+            return displayAddr(sym, ui.showLma);
         case 'name':
-            return displayName(sym, demangle).toLowerCase();
+            return displayName(sym, ui.demangle).toLowerCase();
         case 'kind':
             return sym.kind;
         case 'section':
@@ -165,8 +167,8 @@ export function filterAndSort(doc: MapDocument, ui: UiState): RowView[] {
     const dir = ui.sortDir === 'asc' ? 1 : -1;
     const key = ui.sortKey;
     kept.sort((a, b) => {
-        const ka = sortKeyOf(a, key, ui.demangle);
-        const kb = sortKeyOf(b, key, ui.demangle);
+        const ka = sortKeyOf(a, key, ui);
+        const kb = sortKeyOf(b, key, ui);
         if (ka < kb) {
             return -dir;
         }
@@ -315,6 +317,17 @@ export function formatAddr(n: number): string {
     const hex = n.toString(16);
     const width = n > 0xffffffff ? 16 : 8;
     return '0x' + hex.padStart(width, '0');
+}
+
+/**
+ * Address the Address column renders: the runtime address (VMA) as laid out in
+ * memory, or the load address (LMA) when the toolbar toggle asks for it. Rows
+ * that carry no load address — `.bss`, and sections GNU ld prints no
+ * `load address` line for — fall back to their VMA, which is the value the
+ * linker reports as the load address there anyway.
+ */
+export function displayAddr(sym: SymbolRecord, showLma: boolean): number {
+    return showLma && sym.lma != null ? sym.lma : sym.addr;
 }
 
 export function toCsv(rows: RowView[], demangle: boolean): string {

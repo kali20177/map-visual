@@ -5,6 +5,7 @@ import { tr } from './i18n';
 import {
     DEFAULT_UI_STATE,
     buildView,
+    displayAddr,
     filterAndSort,
     flattenItems,
     formatAddr,
@@ -106,6 +107,7 @@ function restoreUi(raw: unknown): UiState {
         filterText: typeof p.filterText === 'string' ? p.filterText : '',
         minSize: typeof p.minSize === 'number' && Number.isFinite(p.minSize) && p.minSize > 0 ? p.minSize : 0,
         demangle: p.demangle !== false,
+        showLma: p.showLma === true,
         hideSystem: p.hideSystem === true,
         showDiscarded: p.showDiscarded === true,
     };
@@ -216,6 +218,7 @@ root.innerHTML = `
       <option value="1024">≥ 1 K</option>
     </select>
     <button id="mv-demangle" class="mv-toggle" title="${escapeAttr(tr('Toggle C++ demangling'))}">${escapeHtml(tr('Demangle'))}</button>
+    <button id="mv-lma" class="mv-toggle" title="${escapeAttr(tr('Show load addresses (LMA) in the Address column instead of runtime addresses (VMA)'))}">${escapeHtml(tr('LMA'))}</button>
     <button id="mv-system" class="mv-toggle" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
     <button id="mv-discarded" class="mv-toggle" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
     <button id="mv-view" class="mv-toggle" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
@@ -247,6 +250,7 @@ const matchEl = $<HTMLSpanElement>('mv-match');
 const groupEl = $<HTMLSelectElement>('mv-group');
 const minSizeEl = $<HTMLSelectElement>('mv-minsize');
 const demangleEl = $<HTMLButtonElement>('mv-demangle');
+const lmaEl = $<HTMLButtonElement>('mv-lma');
 const systemEl = $('mv-system');
 const discardedEl = $('mv-discarded');
 const viewEl = $('mv-view');
@@ -326,7 +330,11 @@ function applyCols(): void {
 
 // ---- rendering ----
 
-/** English header of every sortable column; rendered through `tr` and reused by the footer's sort readout. */
+/**
+ * English header of every sortable column; rendered through `tr` and reused by
+ * the footer's sort readout. The Address column is the exception — it goes
+ * through `columnLabel`, since its header names the address form on screen.
+ */
 const COLUMN_LABELS: Record<SortKey, string> = {
     size: 'Size',
     name: 'Symbol',
@@ -339,6 +347,17 @@ const COLUMN_LABELS: Record<SortKey, string> = {
 /** Display order — narrower columns last, so width trades stay natural. */
 const COLUMN_ORDER: SortKey[] = ['size', 'name', 'kind', 'section', 'object', 'addr'];
 
+/**
+ * Header text of a column. The Address column names the address it currently
+ * shows, so the LMA toggle is readable from the table itself.
+ */
+function columnLabel(key: SortKey): string {
+    if (key !== 'addr') {
+        return tr(COLUMN_LABELS[key]);
+    }
+    return state.ui.showLma ? tr('Address (LMA)') : tr('Address (VMA)');
+}
+
 function renderHeader(): void {
     theadEl.innerHTML =
         COLUMN_ORDER.map((key, i) => {
@@ -346,7 +365,7 @@ function renderHeader(): void {
             const arrow = active ? (state.ui.sortDir === 'asc' ? '▲' : '▼') : '';
             // the last column has no right neighbour to trade width with
             const grip = i < COLUMN_ORDER.length - 1 ? `<span class="mv-colresize" data-col="${i}" title="${tr('Drag to resize the column')}"></span>` : '';
-            return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${escapeHtml(tr(COLUMN_LABELS[key]))}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
+            return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${escapeHtml(columnLabel(key))}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
         }).join('') + `<div class="mv-gutter"></div>`;
 }
 
@@ -573,7 +592,7 @@ function renderWindow(): void {
           <div class="mv-td"><span class="mv-kindchip k-${sym.kind}">${sym.kind}</span></div>
           <div class="mv-td mv-mono mv-td-section" title="${escapeAttr(sym.section)}">${highlightHtml(sym.section, terms)}</div>
           <div class="mv-td mv-td-object" title="${escapeAttr(sym.object)}">${sym.isLto ? '<span class="mv-lto">LTO</span>' : ''}${objLabel}</div>
-          <div class="mv-td mv-mono mv-td-addr" title="${sym.lma != null ? 'LMA ' + formatAddr(sym.lma) : ''}">${formatAddr(sym.addr)}</div>
+          <div class="mv-td mv-mono mv-td-addr">${formatAddr(displayAddr(sym, state.ui.showLma))}</div>
         </div>`;
         }
     }
@@ -595,7 +614,7 @@ function renderFooter(): void {
         tr('RAM {0}', formatBytes(t.ram)),
         t.discardedCount > 0 ? tr('{0} removed by gc', t.discardedCount) : '',
         t.fillTotal > 0 ? tr('padding {0}', formatBytes(t.fillTotal)) : '',
-        tr('sort: {0} {1}', tr(COLUMN_LABELS[state.ui.sortKey]), state.ui.sortDir === 'asc' ? tr('ascending') : tr('descending')),
+        tr('sort: {0} {1}', columnLabel(state.ui.sortKey), state.ui.sortDir === 'asc' ? tr('ascending') : tr('descending')),
     ].filter(Boolean);
     footerEl.innerHTML = parts.map((p) => `<span>${escapeHtml(p)}</span>`).join('');
 }
@@ -874,6 +893,11 @@ demangleEl.addEventListener('click', () => {
         return;
     }
     state.ui.demangle = !state.ui.demangle;
+    syncToggles();
+    renderAll();
+});
+lmaEl.addEventListener('click', () => {
+    state.ui.showLma = !state.ui.showLma;
     syncToggles();
     renderAll();
 });
@@ -1252,7 +1276,7 @@ function selectedRows(): RowView[] {
 /** The tab-separated "full row" text — the same shape `Copy full row` puts on the clipboard. */
 function fullRowText(row: RowView): string {
     const sym = row.sym;
-    return `${row.display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`;
+    return `${row.display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(displayAddr(sym, state.ui.showLma))}`;
 }
 
 function exportRows(rows: RowView[]): void {
@@ -1490,6 +1514,7 @@ function syncToggles(): void {
     demangleEl.title = state.demangleAvailable
         ? tr('Toggle C++ demangling')
         : tr('No demangled names in this parse — enable "mapvisual.demangle" in settings and reopen');
+    lmaEl.classList.toggle('on', state.ui.showLma);
     systemEl.classList.toggle('on', state.ui.hideSystem);
     discardedEl.classList.toggle('on', state.ui.showDiscarded);
 }
