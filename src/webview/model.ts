@@ -1,8 +1,10 @@
 import type { GroupBy, MapDocument, SortKey, SymbolRecord, UiState } from '../types';
+import { tr } from './i18n';
 
 /**
  * Pure view-model for the webview: filtering, sorting, grouping, formatting.
- * No DOM / vscode API access here so it can be unit-tested in Node.
+ * No DOM / vscode API access here so it can be unit-tested in Node — `tr` is
+ * safe to call there too, it just returns the English source string.
  *
  * `SortKey` / `GroupBy` / `UiState` are re-exported for the webview's own
  * import sites; they live in types.ts because the host also round-trips them
@@ -185,18 +187,18 @@ export function groupKeyOf(sym: SymbolRecord, groupBy: GroupBy): string {
         case 'none':
             return '';
         case 'object':
-            return sym.member ? `${baseName(sym.archive ?? '')} › ${sym.member}` : baseName(sym.object) || '(none)';
+            return sym.member ? `${baseName(sym.archive ?? '')} › ${sym.member}` : baseName(sym.object) || tr('(none)');
         case 'archive':
-            return sym.archive ? baseName(sym.archive) : '(no archive)';
+            return sym.archive ? baseName(sym.archive) : tr('(no archive)');
         case 'kind':
             return sym.kind;
         case 'outSection':
             // link-script granularity: `section` is the *input* section, so
             // grouping by it splits `.text` into one group per function
-            return sym.outSection ?? (sym.section || '(none)');
+            return sym.outSection ?? (sym.section || tr('(none)'));
         case 'directory': {
             const dir = directoryOf(sym.object);
-            return dir || '(root)';
+            return dir || tr('(root)');
         }
     }
 }

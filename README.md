@@ -27,6 +27,7 @@ A linker map records where object files are mapped into memory, how common symbo
 - **Real linker output**: handles `-ffunction-sections` entries, LTO merged sections, `--gc-sections` discards, `*fill*` padding, static-archive members and relax annotations, and counts `.data` in both Flash and RAM.
 - **CSV export**: the filtered rows, or just the rows you selected.
 - **Go to source**: jump from a symbol to its source file in your workspace.
+- **Chinese UI**: the interface follows your VS Code display language. With the Chinese language pack installed, the commands, settings, tooltips, panels and row menus all come up in Chinese, with no configuration; anything without a translation stays in English.
 - **CLI included**: the same parser runs from the command line too (see below).
 
 ## Getting started

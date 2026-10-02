@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { MapDocument } from '../types';
+import type { ProgressStage } from '../protocol';
 import { detectFormat } from './detect';
 import { Warnings } from './warnings';
 import { Demangler, demanglerAvailable, extractSectionSymbol, initDemangler, isMangled } from '../demangle';
@@ -12,7 +13,12 @@ export interface ParseOptions {
     formatOverride: 'auto' | 'gnu-ld' | 'lld';
 }
 
-export type ProgressFn = (stage: string, pct: number) => void;
+/**
+ * Reported stage is one of `PROGRESS_STAGES` rather than free prose: the host
+ * translates it for the progress notification, and the union keeps a new stage
+ * from reaching the UI untranslated (the CLI prints the raw value).
+ */
+export type ProgressFn = (stage: ProgressStage, pct: number) => void;
 
 export class MapParseError extends Error {
     constructor(
@@ -89,11 +95,9 @@ export async function parseMapText(
     if (parsed.symbols.length === 0) {
         // 零行 = "0 B 固件 + 零告警" 的静默错答：auto 检测被头部锚点误导
         // （如文件被截断、内容被裁剪），或强制格式猜错时都要说一声
-        warnings.add(
-            opts.formatOverride !== 'auto'
-                ? `format override "${opts.formatOverride}" yielded no rows — the map may not be in this format`
-                : 'no rows parsed — the map may be truncated or its memory map content is missing',
-        );
+        warnings.add(opts.formatOverride !== 'auto' ? 'formatOverrideNoRows' : 'noRowsParsed', {
+            params: opts.formatOverride !== 'auto' ? [opts.formatOverride] : undefined,
+        });
     }
     progress('demangling', 65);
 
@@ -111,7 +115,7 @@ export async function parseMapText(
         }
     }
     if (opts.demangle && !demanglerAvailable()) {
-        warnings.add('demangler unavailable (WASM module failed to load) — mangled names kept as-is');
+        warnings.add('demanglerUnavailable');
     }
     progress('analyzing regions', 85);
 

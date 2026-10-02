@@ -254,3 +254,4 @@ CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 13. **treemap `count` 全层为行数**（复核轮 N1）：首版只把叶子层改为行数，k2 层仍是去重名数（rb-demo `.text` 103 vs 实际 106）；k2 改为对叶子行数求和，`Σ children.count == parent.count` 与 size 不变量一起进全 fixture 属性测试。
 14. **loose fill 回落分支补告警与探针**（复核轮 N4）：22 份语料对该分支零命中（`outSection` 全非 null）；gnuld 对输出段之外的 fill 补告警——有段头名时明示 `possibly stale header`（LOAD/OUTPUT 边界后 `currentSectionHeader` 可能过期，正是混层复发的入口），无段头时提示 `no section header seen`；合成探针两场景进 cli.test.ts。
 15. **cli-allowlist 的 from 改 `^src/cli` 前缀**（复核轮 N4 附注）：文件枚举对 M7 新增 CLI 文件（stdin/MCP server）不设防，前缀式默认覆盖，`to` 侧 pathNot 同步用前缀；经临时文件故意违规复测。
+16. **warnings 条目新增 `code` / `params`**（2026-10-02，界面本地化配套）：`message` 仍是渲染好的英文成品、逐字未变（现有断言与脚本按它写，继续有效）；新增字段供界面按显示语言重渲染（`region "OCRAM" holds…` 这类含动态内容的告警无法整串查表翻译）。两者由 `src/types.ts` 的 `WARNING_TEMPLATES` 同一张表渲染，不会各自漂移；CLI 自身不消费新字段。

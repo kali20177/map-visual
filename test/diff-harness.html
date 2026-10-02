@@ -40,6 +40,19 @@
     };
   };
 </script>
+<script>
+  // `?zh` reproduces the localized webview — see the same block in harness.html.
+  if (/[?&]zh\b/.test(location.search)) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/l10n/bundle.l10n.zh-cn.json', false);
+    xhr.send();
+    var l10n = document.createElement('script');
+    l10n.type = 'application/json';
+    l10n.id = 'mv-l10n';
+    l10n.textContent = xhr.responseText;
+    document.body.appendChild(l10n);
+  }
+</script>
 <script src="/dist/diff.js"></script>
 </body>
 </html>

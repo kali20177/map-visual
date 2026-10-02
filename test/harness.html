@@ -115,6 +115,22 @@
     };
   };
 </script>
+<script>
+  // `?zh` reproduces the localized webview: the host hands the bundle to the
+  // page as a JSON <script> block (see l10nBundleScript in src/hostI18n.ts), so
+  // this mirrors that — synchronously, because the webview reads it while
+  // building its shell and an async fetch would paint English first.
+  if (/[?&]zh\b/.test(location.search)) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/l10n/bundle.l10n.zh-cn.json', false);
+    xhr.send();
+    var l10n = document.createElement('script');
+    l10n.type = 'application/json';
+    l10n.id = 'mv-l10n';
+    l10n.textContent = xhr.responseText;
+    document.body.appendChild(l10n);
+  }
+</script>
 <script src="/dist/webview.js"></script>
 </body>
 </html>

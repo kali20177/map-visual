@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { MapEditorProvider } from './mapEditor';
 import { DiffPanel } from './diffPanel';
 import { ParseWorkerClient } from './workerClient';
+import { progressText } from './hostI18n';
 
 export function activate(context: vscode.ExtensionContext): void {
     const worker = new ParseWorkerClient(context.extensionPath);
@@ -25,7 +26,7 @@ export function activate(context: vscode.ExtensionContext): void {
             // custom editor that currently has focus (activeTextEditor is undefined there).
             const target = uri ?? currentMapUri() ?? provider.activeMapUri();
             if (!target) {
-                void vscode.window.showInformationMessage('MapVisual: no map file is open.');
+                void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: no map file is open.'));
                 return;
             }
             void vscode.commands.executeCommand('vscode.openWith', target, 'default', vscode.ViewColumn.Active);
@@ -47,7 +48,7 @@ async function openMapFile(): Promise<void> {
     const maps = await findWorkspaceMaps();
     if (maps.length === 0) {
         void vscode.window.showInformationMessage(
-            'MapVisual: no .map files found in this workspace. Generate one with -Wl,-Map=out.map (GCC/clang) or -Map=out.map (ld.lld).',
+            vscode.l10n.t('MapVisual: no .map files found in this workspace. Generate one with -Wl,-Map=out.map (GCC/clang) or -Map=out.map (ld.lld).'),
         );
         return;
     }
@@ -55,7 +56,7 @@ async function openMapFile(): Promise<void> {
         await openInViewer(maps[0]);
         return;
     }
-    const picked = await pickMap('Select a linker map file', maps);
+    const picked = await pickMap(vscode.l10n.t('Select a linker map file'), maps);
     if (picked) {
         await openInViewer(picked);
     }
@@ -64,21 +65,21 @@ async function openMapFile(): Promise<void> {
 async function diffMaps(worker: ParseWorkerClient, context: vscode.ExtensionContext): Promise<void> {
     const maps = await findWorkspaceMaps();
     if (maps.length < 2) {
-        void vscode.window.showInformationMessage('MapVisual: diffing needs at least two .map files in this workspace.');
+        void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: diffing needs at least two .map files in this workspace.'));
         return;
     }
-    const after = await pickMap('Select the NEW (after) map', maps);
+    const after = await pickMap(vscode.l10n.t('Select the NEW (after) map'), maps);
     if (!after) {
         return;
     }
-    const before = await pickMap('Select the OLD (before) map', maps.filter((m) => m.fsPath !== after.fsPath));
+    const before = await pickMap(vscode.l10n.t('Select the OLD (before) map'), maps.filter((m) => m.fsPath !== after.fsPath));
     if (!before) {
         return;
     }
     const cfg = vscode.workspace.getConfiguration('mapvisual');
     try {
         const diff = await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Window, title: 'MapVisual: diffing maps' },
+            { location: vscode.ProgressLocation.Window, title: vscode.l10n.t('MapVisual: diffing maps') },
             (progress) =>
                 worker.diff(
                     {
@@ -88,7 +89,7 @@ async function diffMaps(worker: ParseWorkerClient, context: vscode.ExtensionCont
                         demangle: cfg.get<boolean>('demangle', true),
                         formatOverride: cfg.get<'auto' | 'gnu-ld' | 'lld'>('formatOverride', 'auto'),
                     },
-                    (stage) => progress.report({ message: stage }),
+                    (p) => progress.report({ message: progressText(p) }),
                 ),
         );
         await DiffPanel.create(context, diff);
@@ -97,7 +98,7 @@ async function diffMaps(worker: ParseWorkerClient, context: vscode.ExtensionCont
         if (err.kind === 'json') {
             void vscode.window.showWarningMessage(err.message);
         } else {
-            void vscode.window.showErrorMessage(`MapVisual: ${err.message}`);
+            void vscode.window.showErrorMessage(vscode.l10n.t('MapVisual: {0}', err.message));
         }
     }
 }

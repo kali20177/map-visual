@@ -144,7 +144,7 @@ export function allocateSizes(group: Contribution, warnings: Warnings): Allocati
         // unclaimed prefix instead.
         const sym = syms[0];
         if (sym.addr < group.vma || sym.addr >= group.vma + group.size) {
-            warnings.add('symbol address outside its contribution; size clamped', `${sym.name} @ 0x${sym.addr.toString(16)}`);
+            warnings.add('symbolAddressClamped', { sample: `${sym.name} @ 0x${sym.addr.toString(16)}` });
         }
         const prefixPad = Math.max(0, Math.min(group.size, sym.addr - group.vma));
         const size = Math.max(0, group.vma + group.size - sym.addr);
@@ -160,7 +160,7 @@ export function allocateSizes(group: Contribution, warnings: Warnings): Allocati
     for (let k = 0; k < n - 1; k++) {
         const delta = syms[order[k + 1]].addr - syms[order[k]].addr;
         if (delta < 0 || delta > group.size) {
-            warnings.add('symbol address outside its contribution; size clamped', `${syms[order[k]].name} @ 0x${syms[order[k]].addr.toString(16)}`);
+            warnings.add('symbolAddressClamped', { sample: `${syms[order[k]].name} @ 0x${syms[order[k]].addr.toString(16)}` });
         }
         sortedSizes.push(Math.max(0, Math.min(delta, group.size)));
     }
@@ -174,7 +174,7 @@ export function allocateSizes(group: Contribution, warnings: Warnings): Allocati
 
     const sum = result.reduce((a, b) => a + b, 0);
     if (sum + prefixPad !== group.size) {
-        warnings.add('symbol sizes do not sum to contribution size (padding or annotation drift)', `${group.section}: ${sum} vs ${group.size}`);
+        warnings.add('sizesDoNotSum', { sample: `${group.section}: ${sum} vs ${group.size}` });
     }
     return { sizes: result, prefixPad };
 }
@@ -681,7 +681,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     }
                     const section = pendingSection ?? (currentSectionHeader || '(unknown)');
                     if (!pendingSection && !currentSectionHeader) {
-                        warnings.add('contribution line without a preceding section name', line.trim(), lineNo + 1);
+                        warnings.add('contributionWithoutSection', { sample: line.trim(), line: lineNo + 1 });
                     }
                     // Section-level rows are located by name, so they must point
                     // at a line that prints it: the bare child header when ld
@@ -742,12 +742,12 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     if (group) {
                         group.symbols.push({ addr: parseInt(symbol[1], 16), name, line: lineNo + 1 });
                     } else {
-                        warnings.add('symbol line without a preceding contribution', line.trim(), lineNo + 1);
+                        warnings.add('symbolWithoutContribution', { sample: line.trim(), line: lineNo + 1 });
                     }
                     break;
                 }
 
-                warnings.add('unrecognized line', line.trim(), lineNo + 1);
+                warnings.add('unrecognizedLine', { sample: line.trim(), line: lineNo + 1 });
                 break;
             }
         }
@@ -760,26 +760,22 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
     // `section` may even be stale after a LOAD/OUTPUT boundary, so the
     // attribution is ambiguous enough to warn about.
     for (const fill of looseFills) {
-        warnings.add(
-            fill.section
-                ? `fill outside any output section — attributed to possibly stale header "${fill.section}"`
-                : 'fill outside any output section (no section header seen)',
-            `*fill* 0x${fill.vma.toString(16)}`,
-        );
+        warnings.add(fill.section ? 'fillOutsideOutputSectionStaleHeader' : 'fillOutsideOutputSection', {
+            params: fill.section ? [fill.section] : undefined,
+            sample: `*fill* 0x${fill.vma.toString(16)}`,
+        });
         emitFill(fill, null);
     }
 
     if (tilingFallbacks > 0) {
-        let msg = `tiling search failed in ${tilingFallbacks} output section(s) — kept all candidate lines (possible double count)`;
-        if (budgetFailures > 0) {
-            msg += `; visit budget exhausted in ${budgetFailures} of them`;
-        }
-        warnings.add(msg);
+        // two codes rather than a concatenated suffix: each renders as one whole
+        // sentence, which is what the translation needs to reorder freely
+        warnings.add(budgetFailures > 0 ? 'tilingSearchFailedWithBudget' : 'tilingSearchFailed', {
+            params: budgetFailures > 0 ? [tilingFallbacks, budgetFailures] : [tilingFallbacks],
+        });
     }
     if (extentFallbacks > 0) {
-        warnings.add(
-            `output extent unknown for ${extentFallbacks} output section(s) — kept all candidate lines without tiling (possible double count)`,
-        );
+        warnings.add('outputExtentUnknown', { params: [extentFallbacks] });
     }
 
     // Rows whose name came from a section often embed the mangled symbol

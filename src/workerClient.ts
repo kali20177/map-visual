@@ -3,9 +3,9 @@ import { Worker } from 'node:worker_threads';
 import * as vscode from 'vscode';
 import type { MapDocument } from './types';
 import type { DiffResult } from './types';
-import type { HostToWorker, WorkerToHost } from './protocol';
+import type { HostToWorker, ProgressEvent, WorkerToHost } from './protocol';
 
-export type ProgressReporter = (stage: string, pct: number) => void;
+export type ProgressReporter = (progress: ProgressEvent) => void;
 
 interface PendingJob {
     resolve: (value: MapDocument | DiffResult) => void;
@@ -39,7 +39,7 @@ export class ParseWorkerClient implements vscode.Disposable {
                     return;
                 }
                 if (msg.type === 'progress') {
-                    job.onProgress?.(msg.stage, msg.pct);
+                    job.onProgress?.({ stage: msg.stage, pct: msg.pct, side: msg.side, detail: msg.detail });
                     return;
                 }
                 this.pending = null;

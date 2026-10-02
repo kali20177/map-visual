@@ -1,6 +1,7 @@
-import type { MapDocument, PersistedViewState, SymbolKind, SymbolRecord } from '../types';
-import { GROUP_KEYS, SORT_KEYS, VIEW_STATE_VERSION } from '../types';
+import type { MapDocument, ParseWarning, PersistedViewState, SymbolKind, SymbolRecord } from '../types';
+import { GROUP_KEYS, SORT_KEYS, VIEW_STATE_VERSION, WARNING_TEMPLATES } from '../types';
 import type { ClickAction, HostToWebview, WebviewToHost } from '../protocol';
+import { tr } from './i18n';
 import {
     DEFAULT_UI_STATE,
     buildView,
@@ -198,31 +199,31 @@ root.innerHTML = `
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="mv-file" class="mv-file">—</span><span id="mv-format" class="mv-chip mv-chip-format"></span></div>
     <div class="mv-searchwrap">
-      <input id="mv-search" class="mv-search" type="text" placeholder="Filter symbols — mangled or demangled (-word excludes)" spellcheck="false" />
-      <button id="mv-search-clear" class="mv-search-clear" type="button" title="Clear the filter (Esc)" aria-label="Clear filter">×</button>
+      <input id="mv-search" class="mv-search" type="text" placeholder="${escapeAttr(tr('Filter symbols — mangled or demangled (-word excludes)'))}" spellcheck="false" />
+      <button id="mv-search-clear" class="mv-search-clear" type="button" title="${escapeAttr(tr('Clear the filter (Esc)'))}" aria-label="${escapeAttr(tr('Clear filter'))}">×</button>
     </div>
     <span id="mv-match" class="mv-match" role="status"></span>
-    <select id="mv-group" class="mv-select" title="Group by">
-      <option value="none">No grouping</option>
-      <option value="object">Object / Library</option>
-      <option value="archive">Archive</option>
-      <option value="outSection">Output section</option>
-      <option value="kind">Section type</option>
-      <option value="directory">Directory</option>
+    <select id="mv-group" class="mv-select" title="${escapeAttr(tr('Group by'))}">
+      <option value="none">${escapeHtml(tr('No grouping'))}</option>
+      <option value="object">${escapeHtml(tr('Object / Library'))}</option>
+      <option value="archive">${escapeHtml(tr('Archive'))}</option>
+      <option value="outSection">${escapeHtml(tr('Output section'))}</option>
+      <option value="kind">${escapeHtml(tr('Section type'))}</option>
+      <option value="directory">${escapeHtml(tr('Directory'))}</option>
     </select>
-    <select id="mv-minsize" class="mv-select" title="Minimum size">
-      <option value="0">All sizes</option>
+    <select id="mv-minsize" class="mv-select" title="${escapeAttr(tr('Minimum size'))}">
+      <option value="0">${escapeHtml(tr('All sizes'))}</option>
       <option value="16">≥ 16 B</option>
       <option value="64">≥ 64 B</option>
       <option value="256">≥ 256 B</option>
       <option value="1024">≥ 1 K</option>
     </select>
-    <button id="mv-demangle" class="mv-toggle" title="Toggle C++ demangling">C++</button>
-    <button id="mv-system" class="mv-toggle" title="Hide compiler/runtime objects (crt, libgcc, libc…)">System</button>
-    <button id="mv-discarded" class="mv-toggle" title="Show sections removed by --gc-sections">Removed</button>
-    <button id="mv-view" class="mv-toggle" title="Toggle list / treemap view">Treemap</button>
-    <button id="mv-split" class="mv-toggle" title="Show the raw map file beside this view — click a symbol row to jump to its line">Raw</button>
-    <button id="mv-export" class="mv-btn" title="Export the filtered rows as CSV">CSV</button>
+    <button id="mv-demangle" class="mv-toggle" title="${escapeAttr(tr('Toggle C++ demangling'))}">C++</button>
+    <button id="mv-system" class="mv-toggle" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
+    <button id="mv-discarded" class="mv-toggle" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
+    <button id="mv-view" class="mv-toggle" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
+    <button id="mv-split" class="mv-toggle" title="${escapeAttr(tr('Show the raw map file beside this view — click a symbol row to jump to its line'))}">${escapeHtml(tr('Raw'))}</button>
+    <button id="mv-export" class="mv-btn" title="${escapeAttr(tr('Export the filtered rows as CSV'))}">CSV</button>
   </div>
   <div class="mv-body">
     <aside id="mv-summary" class="mv-summary"></aside>
@@ -328,25 +329,28 @@ function applyCols(): void {
 
 // ---- rendering ----
 
+/** English header of every sortable column; rendered through `tr` and reused by the footer's sort readout. */
+const COLUMN_LABELS: Record<SortKey, string> = {
+    size: 'Size',
+    name: 'Symbol',
+    kind: 'Kind',
+    section: 'Section',
+    object: 'Object / Library',
+    addr: 'Address',
+};
+
+/** Display order — narrower columns last, so width trades stay natural. */
+const COLUMN_ORDER: SortKey[] = ['size', 'name', 'kind', 'section', 'object', 'addr'];
+
 function renderHeader(): void {
-    const cols: Array<[string, string]> = [
-        ['size', 'Size'],
-        ['name', 'Symbol'],
-        ['kind', 'Kind'],
-        ['section', 'Section'],
-        ['object', 'Object / Library'],
-        ['addr', 'Address'],
-    ];
     theadEl.innerHTML =
-        cols
-            .map(([key, label], i) => {
-                const active = state.ui.sortKey === key;
-                const arrow = active ? (state.ui.sortDir === 'asc' ? '▲' : '▼') : '';
-                // the last column has no right neighbour to trade width with
-                const grip = i < cols.length - 1 ? `<span class="mv-colresize" data-col="${i}" title="Drag to resize the column"></span>` : '';
-                return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${label}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
-            })
-            .join('') + `<div class="mv-gutter"></div>`;
+        COLUMN_ORDER.map((key, i) => {
+            const active = state.ui.sortKey === key;
+            const arrow = active ? (state.ui.sortDir === 'asc' ? '▲' : '▼') : '';
+            // the last column has no right neighbour to trade width with
+            const grip = i < COLUMN_ORDER.length - 1 ? `<span class="mv-colresize" data-col="${i}" title="${tr('Drag to resize the column')}"></span>` : '';
+            return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${escapeHtml(tr(COLUMN_LABELS[key]))}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
+        }).join('') + `<div class="mv-gutter"></div>`;
 }
 
 /** Reflect the row count of the active filter query in the toolbar chip. */
@@ -354,7 +358,7 @@ function updateMatchChip(count: number): void {
     const active = state.ui.filterText.trim().length > 0;
     matchEl.classList.toggle('on', active);
     matchEl.classList.toggle('none', active && count === 0);
-    matchEl.textContent = count === 0 ? 'no matches' : `${count} ${count === 1 ? 'match' : 'matches'}`;
+    matchEl.textContent = count === 0 ? tr('no matches') : count === 1 ? tr('1 match') : tr('{0} matches', count);
 }
 
 const MAX_MARKS = 200;
@@ -431,12 +435,12 @@ function renderSummary(): void {
         </div>`;
                   })
                   .join('')
-            : part('Flash (est.)', t.flash, null, 'flash') + part('RAM (est.)', t.ram, null, 'ram');
+            : part(tr('Flash (est.)'), t.flash, null, 'flash') + part(tr('RAM (est.)'), t.ram, null, 'ram');
 
     const kindRow = (k: SymbolKind, cls: string): string => {
         const size = t.kindTotals[k];
         const on = state.ui.kinds[k];
-        return `<div class="mv-kind-row${on ? '' : ' off'}" data-kind="${k}" role="checkbox" aria-checked="${on}" title="Toggle ${k} rows">
+        return `<div class="mv-kind-row${on ? '' : ' off'}" data-kind="${k}" role="checkbox" aria-checked="${on}" title="${escapeAttr(tr('Toggle {0} rows', k))}">
           <span class="mv-dot mv-k-${k}"></span>${k}${cls ? ` <span class="mv-kind-note">${cls}</span>` : ''}<span class="mv-kind-size">${formatBytes(size)}</span></div>`;
     };
     // Bar and total are normalized over storage-occupying kinds, summed by
@@ -454,7 +458,7 @@ function renderSummary(): void {
     const kindRows = MEMORY_KINDS.filter((k) => t.kindTotals[k] > 0 || k === 'code' || k === 'data' || k === 'bss' || k === 'rodata')
         .map((k) => kindRow(k, ''))
         .join('');
-    const metaRow = t.kindTotals.meta > 0 ? kindRow('meta', 'non-alloc') : '';
+    const metaRow = t.kindTotals.meta > 0 ? kindRow('meta', tr('non-alloc')) : '';
 
     const top = doc.symbols
         .filter((s) => s.status === 'kept' && !s.isFill && s.size > 0 && state.ui.kinds[s.kind])
@@ -469,20 +473,25 @@ function renderSummary(): void {
 
     const warnHtml =
         doc.warnings.length > 0
-            ? `<div class="mv-warn"><div class="mv-warn-head">Parsing notes</div>${doc.warnings
-                  .map((w) => `<div class="mv-warn-item">· ${w.line != null ? `<span class="mv-warn-line">L${w.line}</span> ` : ''}${escapeHtml(w.message)}${w.count > 1 ? ` ×${w.count}` : ''}</div>`)
+            ? `<div class="mv-warn"><div class="mv-warn-head">${escapeHtml(tr('Parsing notes'))}</div>${doc.warnings
+                  .map((w) => `<div class="mv-warn-item">· ${w.line != null ? `<span class="mv-warn-line">L${w.line}</span> ` : ''}${escapeHtml(warningText(w))}${w.count > 1 ? ` ×${w.count}` : ''}</div>`)
                   .join('')}</div>`
             : '';
 
     summaryEl.innerHTML = `
-      <div class="mv-section"><div class="mv-section-title">Memory</div>${regionHtml}</div>
-      <div class="mv-section"><div class="mv-section-title">Composition <span class="mv-section-sub">${formatBytes(grand)} allocated</span></div>
+      <div class="mv-section"><div class="mv-section-title">${escapeHtml(tr('Memory'))}</div>${regionHtml}</div>
+      <div class="mv-section"><div class="mv-section-title">${escapeHtml(tr('Composition'))} <span class="mv-section-sub">${escapeHtml(tr('{0} allocated', formatBytes(grand)))}</span></div>
         <div class="mv-kbar">${stacked}</div>
         ${kindRows}
         ${metaRow}
       </div>
-      <div class="mv-section"><div class="mv-section-title">Top symbols</div>${topHtml || '<div class="mv-empty">—</div>'}</div>
+      <div class="mv-section"><div class="mv-section-title">${escapeHtml(tr('Top symbols'))}</div>${topHtml || '<div class="mv-empty">—</div>'}</div>
       ${warnHtml}`;
+}
+
+/** Re-render a warning in the display language; the English `message` is the fallback. */
+function warningText(w: ParseWarning): string {
+    return tr(WARNING_TEMPLATES[w.code], ...(w.params ?? []));
 }
 
 function renderRows(): void {
@@ -545,10 +554,10 @@ function renderWindow(): void {
             const collapsed = state.collapsed.has(g.key);
             html += `
         <div class="mv-row mv-grouprow" data-group="${escapeAttr(g.key)}" data-i="${i}" style="top:${top}px" tabindex="0" role="button" aria-expanded="${collapsed ? 'false' : 'true'}"
-             aria-label="${escapeAttr(g.label)}, ${g.count} symbols, ${formatBytes(g.size)}">
+             aria-label="${escapeAttr(tr('{0}, {1} symbols, {2}', g.label, g.count, formatBytes(g.size)))}">
           <span class="mv-chevron ${collapsed ? 'collapsed' : ''}">▾</span>
           <span class="mv-group-label">${escapeHtml(g.label)}</span>
-          <span class="mv-group-meta">${g.count} symbols · ${formatBytes(g.size)}</span>
+          <span class="mv-group-meta">${escapeHtml(tr('{0} symbols · {1}', g.count, formatBytes(g.size)))}</span>
         </div>`;
         } else if (entry.row) {
             const { sym, display, secondary } = entry.row;
@@ -584,12 +593,12 @@ function renderFooter(): void {
     // the denominator must cover whatever the numerator can show
     const total = state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount;
     const parts = [
-        `${shownRows} / ${total} symbols`,
-        `Flash ${formatBytes(t.flash)}`,
-        `RAM ${formatBytes(t.ram)}`,
-        t.discardedCount > 0 ? `${t.discardedCount} removed by gc` : '',
-        t.fillTotal > 0 ? `padding ${formatBytes(t.fillTotal)}` : '',
-        `sort: ${state.ui.sortKey} ${state.ui.sortDir}`,
+        tr('{0} / {1} symbols', shownRows, total),
+        tr('Flash {0}', formatBytes(t.flash)),
+        tr('RAM {0}', formatBytes(t.ram)),
+        t.discardedCount > 0 ? tr('{0} removed by gc', t.discardedCount) : '',
+        t.fillTotal > 0 ? tr('padding {0}', formatBytes(t.fillTotal)) : '',
+        tr('sort: {0} {1}', tr(COLUMN_LABELS[state.ui.sortKey]), state.ui.sortDir === 'asc' ? tr('ascending') : tr('descending')),
     ].filter(Boolean);
     footerEl.innerHTML = parts.map((p) => `<span>${escapeHtml(p)}</span>`).join('');
 }
@@ -631,7 +640,7 @@ function renderTreemap(): void {
             renderTreemap();
             return;
         }
-        html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1">‹ all groups</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${group.items.length} symbols · ${formatBytes(group.size)}</span></div>`;
+        html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1">${escapeHtml(tr('‹ all groups'))}</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${escapeHtml(tr('{0} symbols · {1}', group.items.length, formatBytes(group.size)))}</span></div>`;
         const rects = squarify(capItems(group.items), { x: rect.x, y: rect.y + 28, w: rect.w, h: rect.h - 28 });
         html += rects.map((r) => tmNodeHtml(r, r.key, r.label)).join('');
     } else {
@@ -650,7 +659,7 @@ function capItems(items: TreemapItem[]): TreemapItem[] {
     }
     const keep = items.slice().sort((a, b) => b.size - a.size).slice(0, MAX);
     const restSize = items.reduce((a, b) => a + b.size, 0) - keep.reduce((a, b) => a + b.size, 0);
-    keep.push({ key: '__more__', label: `+${items.length - MAX} smaller`, size: restSize, kind: 'meta' });
+    keep.push({ key: '__more__', label: tr('+{0} smaller', items.length - MAX), size: restSize, kind: 'meta' });
     return keep;
 }
 
@@ -676,7 +685,7 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
             // leaf: copy the clean symbol name (not the rendered label, which
             // embeds the size — and not the internal key on unlabeled cells)
             const label = tmNode.dataset.tmCopy ?? (tmNode.querySelector('.mv-tm-label')?.textContent ?? key).trim();
-            void navigator.clipboard?.writeText(label).then(() => toast(`Copied: ${label.length > 60 ? label.slice(0, 57) + '…' : label}`));
+            void navigator.clipboard?.writeText(label).then(() => toast(tr('Copied: {0}', truncateLabel(label))));
         } else {
             state.treemapGroupKey = key;
             renderTreemap();
@@ -698,9 +707,9 @@ function showError(err: { kind: string; message: string }): void {
     shellEl.style.display = 'none';
     errorHostEl.innerHTML = `
     <div class="mv-error">
-      <div class="mv-error-title">${isJson ? 'This is probably not a linker map' : 'Could not parse this map file'}</div>
+      <div class="mv-error-title">${escapeHtml(isJson ? tr('This is probably not a linker map') : tr('Could not parse this map file'))}</div>
       <div class="mv-error-msg">${escapeHtml(err.message)}</div>
-      ${isJson ? '<button id="mv-openas-text" class="mv-btn">Open as text</button>' : ''}
+      ${isJson ? `<button id="mv-openas-text" class="mv-btn">${escapeHtml(tr('Open as text'))}</button>` : ''}
     </div>`;
     errorHostEl.hidden = false;
     const btn = errorHostEl.querySelector('#mv-openas-text');
@@ -749,7 +758,7 @@ function onlyKind(kind: SymbolKind): void {
 /** Reveal a row's line in the raw map — the host opens the text pane on demand. */
 function locateRow(sym: SymbolRecord): void {
     if (sym.line == null) {
-        toast('No raw map line for this row');
+        toast(tr('No raw map line for this row'));
         return;
     }
     post({ type: 'revealRawLine', line: sym.line, name: sym.name });
@@ -807,8 +816,8 @@ function syncSearchChrome(): void {
 function updateClickHint(): void {
     splitEl.title =
         state.clickAction === 'locate'
-            ? 'Show the raw map file beside this view — a plain click on a row jumps to its line'
-            : 'Show the raw map file beside this view — double-click a row (or Alt+click) to jump to its line';
+            ? tr('Show the raw map file beside this view — a plain click on a row jumps to its line')
+            : tr('Show the raw map file beside this view — double-click a row (or Alt+click) to jump to its line');
 }
 
 /** Push restored state into the DOM controls (the shell is built empty). */
@@ -1095,10 +1104,19 @@ function openMenu(x: number, y: number, items: Array<{ label: string; action: ()
 }
 
 function copyText(t: string): void {
-    void navigator.clipboard?.writeText(t).then(() => toast(`Copied: ${t.length > 60 ? t.slice(0, 57) + '…' : t}`));
+    void navigator.clipboard?.writeText(t).then(() => toast(tr('Copied: {0}', truncateLabel(t))));
 }
 
+/** Shorten a value for a menu label / toast: long symbol names would blow the row up. */
 function truncateLabel(s: string | null): string {
+    if (!s) {
+        return '';
+    }
+    return s.length > 60 ? s.slice(0, 57) + '…' : s;
+}
+
+/** Same, but tighter — context-menu items sit next to a fixed label. */
+function truncateMenuLabel(s: string | null): string {
     if (!s) {
         return '';
     }
@@ -1110,26 +1128,26 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
     const display = entry.row.display;
     const objBase = baseDisplay(sym.member ?? sym.object);
     const items: Array<{ label: string; action: () => void }> = [
-        { label: `Copy demangled  ${truncateLabel(display)}`, action: () => copyText(display) },
-        { label: `Copy mangled  ${truncateLabel(sym.mangled ?? sym.name)}`, action: () => copyText(sym.mangled ?? sym.name) },
-        { label: 'Copy full row', action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
-        { label: 'Reveal in the raw map', action: () => locateRow(sym) },
+        { label: tr('Copy demangled  {0}', truncateMenuLabel(display)), action: () => copyText(display) },
+        { label: tr('Copy mangled  {0}', truncateMenuLabel(sym.mangled ?? sym.name)), action: () => copyText(sym.mangled ?? sym.name) },
+        { label: tr('Copy full row'), action: () => copyText(`${display}\t${sym.size}\t${sym.section}\t${sym.object}\t${formatAddr(sym.addr)}`) },
+        { label: tr('Reveal in the raw map'), action: () => locateRow(sym) },
     ];
     // the guards keep an empty value from turning "filter by" into "clear the
     // filter" and "exclude" into a stray `-` token in the query
     if (objBase) {
-        items.push({ label: `Filter by object  ${truncateLabel(objBase)}`, action: () => setFilter(quoteTerm(objBase)) });
+        items.push({ label: tr('Filter by object  {0}', truncateMenuLabel(objBase)), action: () => setFilter(quoteTerm(objBase)) });
     }
     if (sym.section) {
-        items.push({ label: `Filter by section  ${truncateLabel(sym.section)}`, action: () => setFilter(quoteTerm(sym.section)) });
+        items.push({ label: tr('Filter by section  {0}', truncateMenuLabel(sym.section)), action: () => setFilter(quoteTerm(sym.section)) });
     }
-    items.push({ label: `Show only kind  ${sym.kind}`, action: () => onlyKind(sym.kind) });
+    items.push({ label: tr('Show only kind  {0}', sym.kind), action: () => onlyKind(sym.kind) });
     if (objBase) {
-        items.push({ label: `Exclude object  ${truncateLabel(objBase)}`, action: () => addFilterTerm(`-${quoteTerm(objBase)}`) });
+        items.push({ label: tr('Exclude object  {0}', truncateMenuLabel(objBase)), action: () => addFilterTerm(`-${quoteTerm(objBase)}`) });
     }
     if (state.selected.size > 0) {
         items.push({
-            label: `Export selected rows as CSV (${state.selected.size})`,
+            label: tr('Export selected rows as CSV ({0})', state.selected.size),
             action: () => {
                 const rows = [...state.selected].sort((a, b) => a - b).map((i) => visible[i]?.row).filter((r): r is RowView => r != null);
                 if (rows.length === 0 || !state.doc) {
@@ -1139,7 +1157,7 @@ function openRowMenu(x: number, y: number, entry: { row: RowView }): void {
             },
         });
     }
-    items.push({ label: 'Go to source', action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) });
+    items.push({ label: tr('Go to source'), action: () => post({ type: 'revealSource', object: sym.object, member: sym.member }) });
     openMenu(x, y, items);
 }
 
@@ -1291,8 +1309,8 @@ function syncToggles(): void {
     // without demangled names in the doc the toggle would silently do nothing
     demangleEl.disabled = !state.demangleAvailable;
     demangleEl.title = state.demangleAvailable
-        ? 'Toggle C++ demangling'
-        : 'No demangled names in this parse — enable "mapvisual.demangle" in settings and reopen';
+        ? tr('Toggle C++ demangling')
+        : tr('No demangled names in this parse — enable "mapvisual.demangle" in settings and reopen');
     systemEl.classList.toggle('on', state.ui.hideSystem);
     discardedEl.classList.toggle('on', state.ui.showDiscarded);
 }
@@ -1373,12 +1391,12 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
             footerEl.textContent = '';
         }
     } else if (msg.type === 'parsing') {
-        footerEl.innerHTML = '<span class="mv-parsing">Parsing…</span>';
+        footerEl.innerHTML = `<span class="mv-parsing">${escapeHtml(tr('Parsing…'))}</span>`;
     } else if (msg.type === 'splitChanged') {
         // host state is the truth (the raw pane may have been closed by hand)
         splitEl.classList.toggle('on', msg.on);
     } else if (msg.type === 'rawLineMissing') {
-        toast('Raw line not found — the map file may have changed since parsing');
+        toast(tr('Raw line not found — the map file may have changed since parsing'));
     }
 });
 

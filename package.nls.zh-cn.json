@@ -1,0 +1,12 @@
+{
+  "description": "把嵌入式链接器 map 文件（GNU ld / LLVM lld）可视化为可排序、可过滤的符号列表，内置 C++ demangle。Flash/RAM 占用一目了然。",
+  "command.open": "MapVisual: 打开 Map 文件",
+  "command.diff": "MapVisual: 比较两个 Map",
+  "command.reveal": "MapVisual: 显示 Map 视图",
+  "command.openAsText": "MapVisual: 以文本打开",
+  "configuration.demangle.description": "还原 C++ 符号名（内置 WASM demangler，无需工具链）。",
+  "configuration.formatOverride.description": "强制指定 map 文件格式，跳过自动检测。",
+  "configuration.clickAction.description": "在符号行上单击的行为。Alt+单击始终执行另一种操作；双击始终在原始 map 中定位该行。",
+  "configuration.clickAction.locate": "在原始 map 中定位该符号所在行（按需在视图旁打开文本面板）。",
+  "configuration.clickAction.copy": "把显示的符号名复制到剪贴板。"
+}

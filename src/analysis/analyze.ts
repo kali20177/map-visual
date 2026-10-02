@@ -170,9 +170,9 @@ const RAM_CONFLICT_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|data)/i;
 function warnRegionRoleConflicts(regions: MemoryRegion[], warnings: Warnings): void {
     for (const r of regions) {
         if (r.role === 'flash' && RAM_CONFLICT_RE.test(r.name) && !FLASH_CONFLICT_RE.test(r.name)) {
-            warnings.add(`region "${r.name}" holds executable content but its name suggests RAM — flash/ram roles may be swapped`);
+            warnings.add('regionRoleSwappedRam', { params: [r.name] });
         } else if (r.role === 'ram' && FLASH_CONFLICT_RE.test(r.name) && !RAM_CONFLICT_RE.test(r.name)) {
-            warnings.add(`region "${r.name}" holds zero-init content but its name suggests flash — flash/ram roles may be swapped`);
+            warnings.add('regionRoleSwappedFlash', { params: [r.name] });
         }
     }
 }

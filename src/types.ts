@@ -61,12 +61,70 @@ export interface SymbolRecord {
     line?: number;
 }
 
+/**
+ * Stable identity of a parse anomaly.
+ *
+ * The parser is not allowed to know about the UI's language (and the CLI is a
+ * script channel whose English output is a contract), so a warning carries both
+ * the rendered English `message` and the pieces the UI needs to render it in
+ * the user's language. `WARNING_TEMPLATES` is the single source both sides read,
+ * which is what keeps a translated warning from drifting away from the English
+ * one it is supposed to mirror.
+ */
+export type WarningCode =
+    | 'unrecognizedLine'
+    | 'symbolWithoutInputSection'
+    | 'contributionWithoutSection'
+    | 'symbolWithoutContribution'
+    | 'symbolAddressClamped'
+    | 'sizesDoNotSum'
+    | 'fillOutsideOutputSectionStaleHeader'
+    | 'fillOutsideOutputSection'
+    | 'tilingSearchFailed'
+    | 'tilingSearchFailedWithBudget'
+    | 'outputExtentUnknown'
+    | 'formatOverrideNoRows'
+    | 'noRowsParsed'
+    | 'demanglerUnavailable'
+    | 'regionRoleSwappedRam'
+    | 'regionRoleSwappedFlash';
+
+/**
+ * English wording of each warning, with `{0}`… placeholders for the values the
+ * parser passes as `ParseWarning.params`. These exact strings are also the
+ * translation keys, so editing one means updating the matching entry in
+ * `l10n/bundle.l10n.*.json`.
+ */
+export const WARNING_TEMPLATES: Record<WarningCode, string> = {
+    unrecognizedLine: 'unrecognized line',
+    symbolWithoutInputSection: 'symbol row without a preceding input section',
+    contributionWithoutSection: 'contribution line without a preceding section name',
+    symbolWithoutContribution: 'symbol line without a preceding contribution',
+    symbolAddressClamped: 'symbol address outside its contribution; size clamped',
+    sizesDoNotSum: 'symbol sizes do not sum to contribution size (padding or annotation drift)',
+    fillOutsideOutputSectionStaleHeader: 'fill outside any output section — attributed to possibly stale header "{0}"',
+    fillOutsideOutputSection: 'fill outside any output section (no section header seen)',
+    tilingSearchFailed: 'tiling search failed in {0} output section(s) — kept all candidate lines (possible double count)',
+    tilingSearchFailedWithBudget:
+        'tiling search failed in {0} output section(s) — kept all candidate lines (possible double count); visit budget exhausted in {1} of them',
+    outputExtentUnknown: 'output extent unknown for {0} output section(s) — kept all candidate lines without tiling (possible double count)',
+    formatOverrideNoRows: 'format override "{0}" yielded no rows — the map may not be in this format',
+    noRowsParsed: 'no rows parsed — the map may be truncated or its memory map content is missing',
+    demanglerUnavailable: 'demangler unavailable (WASM module failed to load) — mangled names kept as-is',
+    regionRoleSwappedRam: 'region "{0}" holds executable content but its name suggests RAM — flash/ram roles may be swapped',
+    regionRoleSwappedFlash: 'region "{0}" holds zero-init content but its name suggests flash — flash/ram roles may be swapped',
+};
+
 export interface ParseWarning {
+    /** English wording, rendered from `WARNING_TEMPLATES[code]` — the CLI contract. */
     message: string;
     count: number;
     samples: string[];
     /** 1-based source line of the first occurrence, when the warning comes from a specific line. */
     line?: number;
+    code: WarningCode;
+    /** Values for the template's `{0}`… placeholders. */
+    params?: Array<string | number>;
 }
 
 export interface MapTotals {

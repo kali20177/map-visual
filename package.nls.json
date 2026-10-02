@@ -1,0 +1,12 @@
+{
+  "description": "Visualize embedded linker map files (GNU ld / LLVM lld) as a sortable, filterable symbol list with C++ demangling. Flash/RAM usage at a glance.",
+  "command.open": "MapVisual: Open Map File",
+  "command.diff": "MapVisual: Compare Two Maps",
+  "command.reveal": "MapVisual: Reveal Map View",
+  "command.openAsText": "MapVisual: Open as Text",
+  "configuration.demangle.description": "Demangle C++ symbol names (built-in WASM demangler, no toolchain required).",
+  "configuration.formatOverride.description": "Force the map file format instead of auto-detection.",
+  "configuration.clickAction.description": "What a plain click on a symbol row does. Alt+click always performs the other action; double-click always reveals the line in the raw map.",
+  "configuration.clickAction.locate": "Reveal the symbol's line in the raw map (opens the text pane beside the view on demand).",
+  "configuration.clickAction.copy": "Copy the displayed symbol name to the clipboard."
+}

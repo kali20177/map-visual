@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import type { MapDocument } from './types';
 import type { ClickAction, ParseRequest, WebviewToHost } from './protocol';
 import { ParseWorkerClient } from './workerClient';
+import { progressText, l10nBundleScript } from './hostI18n';
 import { sourceGlobPatterns, rankCandidates } from './sourceMatch';
 import { ViewStateStore } from './viewState';
 
@@ -132,15 +133,15 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 const doc = await vscode.window.withProgress(
                     {
                         location: vscode.ProgressLocation.Window,
-                        title: `MapVisual: parsing ${path.basename(document.uri.fsPath)}`,
+                        title: vscode.l10n.t('MapVisual: parsing {0}', path.basename(document.uri.fsPath)),
                         cancellable: true,
                     },
                     (progress, token) =>
                         new Promise<MapDocument>((resolve, reject) => {
                             token.onCancellationRequested(() => reject(new vscode.CancellationError()));
                             this.worker
-                                .parse(req, (stage) => {
-                                    progress.report({ message: stage });
+                                .parse(req, (p) => {
+                                    progress.report({ message: progressText(p) });
                                 })
                                 .then(resolve, reject);
                         }),
@@ -290,8 +291,9 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         this.statusItem.tooltip = new vscode.MarkdownString(
             `**${path.basename(doc.file)}** (${doc.format})\n\n` +
                 `Flash **${t.flash}** B · RAM **${t.ram}** B\n\n` +
-                `${t.keptCount} symbols (${t.discardedCount} removed by gc)\n\n` +
-                `_Click to bring this view to front_`,
+                vscode.l10n.t('{0} symbols ({1} removed by gc)', t.keptCount, t.discardedCount) +
+                '\n\n' +
+                `_${vscode.l10n.t('Click to bring this view to front')}_`,
         );
         this.statusItem.show();
     }
@@ -309,7 +311,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
     private async revealSource(object: string, member: string | null): Promise<void> {
         const patterns = sourceGlobPatterns(object, member);
         if (patterns.length === 0) {
-            void vscode.window.showInformationMessage(`MapVisual: nothing to look for ("${object || member || '—'}")`);
+            void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: nothing to look for ("{0}")', object || member || '—'));
             return;
         }
         const exclude = '**/{node_modules,.git,dist,out,build,release,DerivedData}/**';
@@ -321,7 +323,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
                 return;
             }
         }
-        void vscode.window.showInformationMessage(`MapVisual: no source file found for "${member ?? object}" in this workspace`);
+        void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: no source file found for "{0}" in this workspace', member ?? object));
     }
 
     /** View column of a visible plain-text tab showing `uri`, if any (the map's own custom editor tab does not count). */
@@ -361,7 +363,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             if (!forced) {
                 if (!quiet) {
                     void vscode.window.showErrorMessage(
-                        `MapVisual: could not open "${path.basename(uri.fsPath)}" as text — check its editor association ("Open With…")`,
+                        vscode.l10n.t('MapVisual: could not open "{0}" as text — check its editor association ("Open With…")', path.basename(uri.fsPath)),
                     );
                 }
                 return undefined;
@@ -497,7 +499,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
             return;
         }
         await vscode.workspace.fs.writeFile(target, Buffer.from(csv, 'utf8'));
-        void vscode.window.showInformationMessage(`MapVisual: exported ${path.basename(target.fsPath)}`);
+        void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: exported {0}', path.basename(target.fsPath)));
     }
 
     private getHtml(webview: vscode.Webview): string {
@@ -505,7 +507,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         const css = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.css'));
         const nonce = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
@@ -514,6 +516,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
 </head>
 <body>
 <div id="app"></div>
+${l10nBundleScript()}
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

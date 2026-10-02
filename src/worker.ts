@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import { basename } from 'node:path';
 import { parseMapFile, parseMapText, MapParseError } from './parser/pipeline';
 import { readFileSync } from 'node:fs';
 import { diffDocuments } from './analysis/diff';
@@ -38,15 +39,15 @@ parentPort.on('message', async (req: HostToWorker) => {
         }
         // diff: both maps through the full pipeline, then compare here so the
         // host never touches two large documents at once
-        post({ type: 'progress', stage: `reading ${req.pathA}`, pct: 5 });
+        post({ type: 'progress', stage: 'reading maps', pct: 5, detail: basename(req.pathA) });
         const textA = readText(req.pathA);
         const textB = readText(req.pathB);
         const opts = { demangle: req.demangle, formatOverride: req.formatOverride };
         const docA = await parseMapText(textA, req.pathA, opts, wasmDir, (stage, pct) =>
-            post({ type: 'progress', stage: `A: ${stage}`, pct: Math.round(pct * 0.45) }),
+            post({ type: 'progress', stage, pct: Math.round(pct * 0.45), side: 'A' }),
         );
         const docB = await parseMapText(textB, req.pathB, opts, wasmDir, (stage, pct) =>
-            post({ type: 'progress', stage: `B: ${stage}`, pct: 50 + Math.round(pct * 0.45) }),
+            post({ type: 'progress', stage, pct: 50 + Math.round(pct * 0.45), side: 'B' }),
         );
         post({ type: 'diffResult', diff: diffDocuments(docA, docB) });
     } catch (e) {

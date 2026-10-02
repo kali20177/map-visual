@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 210 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 222 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
 
@@ -32,17 +32,18 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 
 ## 目录
 
-- `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` `viewState.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）；`viewState.ts` 是宿主侧的按文件视图状态存储（不 import vscode，用结构化接口，可单测）
+- `src/extension.ts` `mapEditor.ts` `diffPanel.ts` `workerClient.ts` `viewState.ts` — 扩展宿主层（唯一允许 import 'vscode' 的地方）；`viewState.ts` 是宿主侧的按文件视图状态存储（不 import vscode，用结构化接口，可单测）；`hostI18n.ts` 只放"调用点手里是值、不是句子"的宿主文案（进度阶段的英文句子 + webview 的 bundle 注入），其余宿主文案一律在调用点直接 `vscode.l10n.t('英文原文')`
 - `src/worker.ts` 与 `src/parser/`（gnuld / lld / detect / registry / pipeline）、`src/demangle/`、`src/analysis/` — worker 运行时，纯 Node，禁止 vscode
 - `src/cli.ts` `src/cliApp.ts` — CLI 运行时（M6，第四入口，独立进程直接调 parser/analysis，不经 worker_threads）：逻辑在 cliApp 的 `runCli` 纯函数（可测、可被未来 MCP 复用），cli.ts 只做进程接线；同受禁 vscode 约束，且只准依赖 worker 树核心与 types/protocol（depcruise cli-allowlist 白名单）
-- `src/webview/`（main / model / diff / treemap）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块
-- `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）
+- `src/webview/`（main / model / diff / treemap / i18n）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块；`i18n.ts` 的 `tr()` 读宿主内联的 `#mv-l10n` bundle，未命中即回落英文原文
+- `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）；解析告警的英文模板 `WARNING_TEMPLATES` 也在这里——worker 树按 code 渲染英文 `message`（CLI 契约），webview 按同一个模板查译文
+- `package.nls.json` `package.nls.zh-cn.json` — 清单静态文案的译文（命令标题、设置描述；清单里写 `%key%`）；`l10n/bundle.l10n.zh-cn.json` — 运行时文案的译文（key 即英文原文，逐字节一致）
 - `test/unit/` — vitest；`test/fixtures/` — 22 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、lld/、real/（外部真实工程黄金基准：rb-demo + zephyr，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
 - `docs/` — DESIGN（§13 实现偏差必读）与 CLI（M6 命令行通道的设计契约）入库；FORMATS（map 格式圣经）、RESEARCH（竞品调研：Map View Embedded、linkermapviz、Emma、puncover、bloaty）为本地 AI 参考文档，不入库（与 REVIEW-* 同策略，见 .gitignore）
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）
 
-- 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/diffPanel/workerClient）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 只准依赖 worker 树核心与 types/protocol**（cli-allowlist 白名单，列表式规则曾漏 diffPanel）
+- 四个运行时物理隔离：**worker 树（worker/parser/demangle/analysis）与 CLI（cli/cliApp）禁止 import vscode**；**webview 禁止 vscode 与 node 内置模块**；**宿主（extension/mapEditor/diffPanel/workerClient/hostI18n）不得直接 import parser/analysis**——解析必须经 worker 消息协议；**CLI 只准依赖 worker 树核心与 types/protocol**（cli-allowlist 白名单，列表式规则曾漏 diffPanel）；反向亦有 `runtime-trees-stay-pure`：worker 树与 CLI 不得依赖宿主层文件（宿主层自带 vscode，ESLint 只拦直接写的 `'vscode'`，绕一层要靠 depcruise）
 - webview 本地依赖白名单：仅 `types.ts` / `protocol.ts` / `webview/` 内部
 - 修改边界规则本身要同步 eslint.config.mjs 与 .dependency-cruiser.cjs 两处，并用"故意违规"验证规则真的会触发
 - 禁 vscode 为什么归 ESLint 管：@types/vscode 使 'vscode' 可解析、tsc 查不出这类违规，但打包后 Worker 启动即崩——由 `no-restricted-imports` 拦截；`package.json` 的 `allowScripts` 是 npm≥11 安装脚本白名单（esbuild / simple-git-hooks）
@@ -59,6 +60,7 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 ## 其他约定
 
 - 所有代码文件以 LF 结尾；不引入格式化器（Prettier/Biome），风格靠统一约定（与 kart 项目一致）
-- UI 文案英文、颜色只用语义 kind 色板 + `--vscode-*` 主题变量（亮/暗/高对比都要正常）
-- webview 视觉验证：`python3 -m http.server 8123` 后访问 `test/harness.html` 与 `test/diff-harness.html`（内置 --vscode-* 变量与 mock 数据，mock 文件已 gitignore）
+- UI 文案源语言是英文（英文原文即译文 key），颜色只用语义 kind 色板 + `--vscode-*` 主题变量（亮/暗/高对比都要正常）
+- 新增用户可见文案必须同时给出中文：宿主侧 `vscode.l10n.t('英文原文', …)`，webview 侧 `tr('英文原文', …)`，数据层（告警/进度）加 `WarningCode` 或 `PROGRESS_STAGES` 并补文案——`test/unit/i18n.test.ts` 用 AST 扫源码字面量，与 `l10n/bundle.l10n.zh-cn.json` 双向比对，漏翻和僵尸条目都会失败（VS Code 缺 key 是静默回落英文，只有测试能拦）。术语不翻：`MapVisual` `C++` `CSV` `LTO` `Flash` `RAM` 单位 `B/K/M`、kind 值（code/data/bss… 兼作 CSS class 与筛选语法）、`mangled`/`demangled`
+- webview 视觉验证：`python3 -m http.server 8123` 后访问 `test/harness.html` 与 `test/diff-harness.html`（内置 --vscode-* 变量与 mock 数据，mock 文件已 gitignore）；加 `?zh` 用同一份语言包渲染中文，用来检查中文下的排版（用同步 XHR 读语言包——webview 首帧就要 bundle，异步会晚一拍）
 - 提交信息用中文 Conventional Commits（`feat:` / `chore:` …）：标题一行说清「什么问题 → 怎么修的」（feat 说做了什么），独立可读；不写审核轮次编号（N1-N4 / P1-P6 / 复审N轮 / 收口），不引用 commit hash——重写历史即失真，审核记录走 docs/ 且不入库。body 分点写现象 / 根因 / 修法，实测数据（行数、字节对账）保留

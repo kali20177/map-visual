@@ -43,6 +43,14 @@ module.exports = {
       },
     },
     {
+      name: 'runtime-trees-stay-pure',
+      severity: 'error',
+      comment:
+        '反向边界：worker 树（worker/parser/demangle/analysis）与 CLI 不得依赖宿主层文件——宿主层自己 import vscode，被 worker/cli bundle 拉进去启动即崩。ESLint 的 no-restricted-imports 只认直接写的 "vscode"，绕一层的间接依赖（如 import hostI18n）要靠本规则拦。',
+      from: { path: '^src/(worker\\.ts|cli|parser/|demangle/|analysis/)' },
+      to: { path: '^src/(extension|mapEditor|diffPanel|workerClient|viewState|hostI18n)\\.ts$' },
+    },
+    {
       name: 'no-orphans',
       severity: 'warn',
       comment:

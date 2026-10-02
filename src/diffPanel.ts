@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { DiffResult } from './types';
 import type { WebviewToHost } from './protocol';
+import { l10nBundleScript } from './hostI18n';
 
 /**
  * Map Diff viewer (M5): a standalone webview panel comparing two maps.
@@ -13,7 +14,7 @@ export class DiffPanel {
         context: vscode.ExtensionContext,
         diff: DiffResult,
     ): Promise<DiffPanel> {
-        const panel = vscode.window.createWebviewPanel('mapvisual.diffView', `Diff: ${path.basename(diff.fileA)} ↔ ${path.basename(diff.fileB)}`, vscode.ViewColumn.Active, {
+        const panel = vscode.window.createWebviewPanel('mapvisual.diffView', vscode.l10n.t('Diff: {0} ↔ {1}', path.basename(diff.fileA), path.basename(diff.fileB)), vscode.ViewColumn.Active, {
             enableScripts: true,
             localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist'), vscode.Uri.joinPath(context.extensionUri, 'media')],
             retainContextWhenHidden: true,
@@ -53,7 +54,7 @@ export class DiffPanel {
             return;
         }
         await vscode.workspace.fs.writeFile(target, Buffer.from(csv, 'utf8'));
-        void vscode.window.showInformationMessage(`MapVisual: exported ${path.basename(target.fsPath)}`);
+        void vscode.window.showInformationMessage(vscode.l10n.t('MapVisual: exported {0}', path.basename(target.fsPath)));
     }
 
     private getHtml(webview: vscode.Webview): string {
@@ -61,7 +62,7 @@ export class DiffPanel {
         const css = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.css'));
         const nonce = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
@@ -70,6 +71,7 @@ export class DiffPanel {
 </head>
 <body>
 <div id="app"></div>
+${l10nBundleScript()}
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

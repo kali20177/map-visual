@@ -115,7 +115,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         if (!row) {
             // header line and any annotations
             if (line.includes(':') && !line.includes('VMA')) {
-                warnings.add('unrecognized line', line.trim(), lineNo + 1);
+                warnings.add('unrecognizedLine', { sample: line.trim(), line: lineNo + 1 });
             }
             continue;
         }
@@ -153,7 +153,7 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         if (current) {
             current.symbols.push({ name: content, addr: vma, size, line: lineNo + 1 });
         } else {
-            warnings.add('symbol row without a preceding input section', line.trim(), lineNo + 1);
+            warnings.add('symbolWithoutInputSection', { sample: line.trim(), line: lineNo + 1 });
         }
     }
     flush();

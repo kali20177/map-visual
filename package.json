@@ -1,11 +1,12 @@
 {
   "name": "mapvisual",
   "displayName": "MapVisual",
-  "description": "Visualize embedded linker map files (GNU ld / LLVM lld) as a sortable, filterable symbol list with C++ demangling. Flash/RAM usage at a glance.",
+  "description": "%description%",
   "version": "0.1.1",
   "publisher": "mapvisual",
   "icon": "media/icon.png",
   "license": "SEE LICENSE IN LICENSE",
+  "l10n": "./l10n",
   "repository": {
     "type": "git",
     "url": "https://github.com/kali20177/map-visual.git"
@@ -35,23 +36,23 @@
     "commands": [
       {
         "command": "mapvisual.open",
-        "title": "MapVisual: Open Map File",
+        "title": "%command.open%",
         "category": "MapVisual"
       },
       {
         "command": "mapvisual.diff",
-        "title": "MapVisual: Compare Two Maps",
+        "title": "%command.diff%",
         "category": "MapVisual"
       },
       {
         "command": "mapvisual.reveal",
-        "title": "MapVisual: Reveal Map View",
+        "title": "%command.reveal%",
         "category": "MapVisual",
         "when": "false"
       },
       {
         "command": "mapvisual.openAsText",
-        "title": "MapVisual: Open as Text",
+        "title": "%command.openAsText%",
         "category": "MapVisual",
         "icon": "$(file)"
       }
@@ -95,7 +96,7 @@
         "mapvisual.demangle": {
           "type": "boolean",
           "default": true,
-          "description": "Demangle C++ symbol names (built-in WASM demangler, no toolchain required)."
+          "description": "%configuration.demangle.description%"
         },
         "mapvisual.formatOverride": {
           "type": "string",
@@ -105,7 +106,7 @@
             "lld"
           ],
           "default": "auto",
-          "description": "Force the map file format instead of auto-detection."
+          "description": "%configuration.formatOverride.description%"
         },
         "mapvisual.clickAction": {
           "type": "string",
@@ -114,11 +115,11 @@
             "copy"
           ],
           "enumDescriptions": [
-            "Reveal the symbol's line in the raw map (opens the text pane beside the view on demand).",
-            "Copy the displayed symbol name to the clipboard."
+            "%configuration.clickAction.locate%",
+            "%configuration.clickAction.copy%"
           ],
           "default": "locate",
-          "description": "What a plain click on a symbol row does. Alt+click always performs the other action; double-click always reveals the line in the raw map."
+          "description": "%configuration.clickAction.description%"
         }
       }
     }

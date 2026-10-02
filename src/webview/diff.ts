@@ -1,6 +1,7 @@
 import type { DiffResult, DiffRow, DiffStatus } from '../types';
 import type { HostToWebview, WebviewToHost } from '../protocol';
 import { formatBytes } from './model';
+import { tr } from './i18n';
 
 declare function acquireVsCodeApi(): { postMessage(msg: WebviewToHost): void };
 
@@ -8,6 +9,9 @@ const vscode = acquireVsCodeApi();
 const ROW_H = 24;
 
 const STATUS_ORDER: DiffStatus[] = ['changed', 'added', 'removed', 'same'];
+
+/** Label of each status chip; the status value itself stays the `data-` key. */
+const STATUS_LABELS: Record<DiffStatus, string> = { changed: 'changed', added: 'added', removed: 'removed', same: 'same' };
 
 interface DiffState {
     diff: DiffResult | null;
@@ -21,15 +25,15 @@ const root = document.getElementById('app')!;
 root.innerHTML = `
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="dv-files" class="mv-file">—</span></div>
-    <input id="dv-search" class="mv-search" type="text" placeholder="Filter symbols…" spellcheck="false" />
-    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status${state.statuses.has(s) ? ' on' : ''}" data-status="${s}">${s}</button>`).join('')}
-    <button id="dv-export" class="mv-btn" title="Export the diff as CSV">CSV</button>
+    <input id="dv-search" class="mv-search" type="text" placeholder="${escapeAttr(tr('Filter symbols…'))}" spellcheck="false" />
+    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status${state.statuses.has(s) ? ' on' : ''}" data-status="${s}">${escapeHtml(tr(STATUS_LABELS[s]))}</button>`).join('')}
+    <button id="dv-export" class="mv-btn" title="${escapeAttr(tr('Export the diff as CSV'))}">CSV</button>
   </div>
   <div class="mv-diff-summary" id="dv-summary"></div>
   <div class="mv-tablewrap">
     <div class="mv-thead mv-diff-head">
-      <div class="mv-th">Δ</div><div class="mv-th">Before</div><div class="mv-th">After</div>
-      <div class="mv-th">Symbol</div><div class="mv-th">Kind</div><div class="mv-th">Object</div>
+      <div class="mv-th">Δ</div><div class="mv-th">${escapeHtml(tr('Before'))}</div><div class="mv-th">${escapeHtml(tr('After'))}</div>
+      <div class="mv-th">${escapeHtml(tr('Symbol'))}</div><div class="mv-th">${escapeHtml(tr('Kind'))}</div><div class="mv-th">${escapeHtml(tr('Object'))}</div>
     </div>
     <div class="mv-tbody" id="dv-tbody"><div class="mv-spacer" id="dv-spacer"><div class="mv-rows" id="dv-rows"></div></div></div>
   </div>
@@ -91,15 +95,17 @@ function render(): void {
     const cell = (label: string, a: number, b: number): string => {
         const delta = b - a;
         const cls = delta > 0 ? 'up' : delta < 0 ? 'down' : '';
-        return `<div class="mv-dcell"><span class="mv-dlabel">${label}</span> ${formatBytes(a)} → ${formatBytes(b)} <span class="mv-delta ${cls}">${signed(delta)}</span></div>`;
+        return `<div class="mv-dcell"><span class="mv-dlabel">${escapeHtml(label)}</span> ${formatBytes(a)} → ${formatBytes(b)} <span class="mv-delta ${cls}">${signed(delta)}</span></div>`;
     };
     const changed = d.rows.filter((r) => r.status !== 'same').length;
     summaryEl.innerHTML =
-        cell('Flash', tA.flash, tB.flash) + cell('RAM', tA.ram, tB.ram) + `<div class="mv-dcell"><span class="mv-dlabel">Symbols</span> ${tA.keptCount} → ${tB.keptCount} <span class="mv-delta">${changed} differ</span></div>`;
+        cell(tr('Flash'), tA.flash, tB.flash) +
+        cell(tr('RAM'), tA.ram, tB.ram) +
+        `<div class="mv-dcell"><span class="mv-dlabel">${escapeHtml(tr('Symbols'))}</span> ${tA.keptCount} → ${tB.keptCount} <span class="mv-delta">${escapeHtml(tr('{0} differ', changed))}</span></div>`;
 
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
     renderWindow();
-    footerEl.innerHTML = `<span>${visible.length} / ${d.rows.length} rows</span><span>sorted by |Δ|</span>`;
+    footerEl.innerHTML = `<span>${escapeHtml(tr('{0} / {1} rows', visible.length, d.rows.length))}</span><span>${escapeHtml(tr('sorted by |Δ|'))}</span>`;
 }
 
 function renderWindow(): void {
@@ -119,7 +125,7 @@ function renderWindow(): void {
         <div class="mv-td mv-td-symbol">
           <span class="mv-kindbar k-${r.kind}"></span>
           <span class="mv-sym">${escapeHtml(r.name)}</span>
-          <span class="mv-statuschip s-${r.status}">${r.status}</span>
+          <span class="mv-statuschip s-${r.status}">${escapeHtml(tr(STATUS_LABELS[r.status]))}</span>
         </div>
         <div class="mv-td"><span class="mv-kindchip k-${r.kind}">${r.kind}</span></div>
         <div class="mv-td mv-td-object" title="${escapeAttr(objLabel)}">${escapeHtml(baseDisplay(objLabel))}</div>
@@ -136,7 +142,7 @@ tbodyEl.addEventListener('click', (ev) => {
     }
     const r = visible[parseInt(rowEl.dataset.i!, 10)];
     if (r) {
-        void navigator.clipboard?.writeText(r.name).then(() => toast(`Copied: ${r.name.length > 60 ? r.name.slice(0, 57) + '…' : r.name}`));
+        void navigator.clipboard?.writeText(r.name).then(() => toast(tr('Copied: {0}', r.name.length > 60 ? r.name.slice(0, 57) + '…' : r.name)));
     }
 });
 
@@ -185,7 +191,9 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
 function escapeHtml(s: string): string {
     return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
-const escapeAttr = escapeHtml;
+function escapeAttr(s: string): string {
+    return escapeHtml(s);
+}
 function baseDisplay(p: string): string {
     if (!p) {
         return '';
