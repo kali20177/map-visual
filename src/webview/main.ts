@@ -215,7 +215,7 @@ root.innerHTML = `
       <option value="256">≥ 256 B</option>
       <option value="1024">≥ 1 K</option>
     </select>
-    <button id="mv-demangle" class="mv-toggle" title="${escapeAttr(tr('Toggle C++ demangling'))}">C++</button>
+    <button id="mv-demangle" class="mv-toggle" title="${escapeAttr(tr('Toggle C++ demangling'))}">${escapeHtml(tr('Demangle'))}</button>
     <button id="mv-system" class="mv-toggle" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
     <button id="mv-discarded" class="mv-toggle" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
     <button id="mv-view" class="mv-toggle" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
@@ -706,7 +706,7 @@ function showError(err: { kind: string; message: string }): void {
     <div class="mv-error">
       <div class="mv-error-title">${escapeHtml(isJson ? tr('This is probably not a linker map') : tr('Could not parse this map file'))}</div>
       <div class="mv-error-msg">${escapeHtml(err.message)}</div>
-      ${isJson ? `<button id="mv-openas-text" class="mv-btn">${escapeHtml(tr('Open as text'))}</button>` : ''}
+      ${isJson ? `<button id="mv-openas-text" class="mv-btn primary">${escapeHtml(tr('Open as text'))}</button>` : ''}
     </div>`;
     errorHostEl.hidden = false;
     const btn = errorHostEl.querySelector('#mv-openas-text');

@@ -222,9 +222,29 @@ body {
     color: var(--vscode-button-foreground);
 }
 
+/* 动作按钮（CSV 导出…）用描边样式：开关靠底色明暗表达开关状态，
+   动作按钮若也用实底就会看着像"永远点亮的开关" */
 .mv-btn {
+    background: transparent;
+    color: var(--vscode-foreground);
+    border-color: var(--vscode-button-border, var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.6)));
+}
+
+.mv-btn:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
+    filter: none;
+}
+
+/* 页面级主操作（空态引导）仍用实底，与工具栏里的动作按钮区分 */
+.mv-btn.primary {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
+    border-color: transparent;
+}
+
+.mv-btn.primary:hover {
+    background: var(--vscode-button-background);
+    filter: brightness(1.15);
 }
 
 /* ---------- body layout ---------- */
