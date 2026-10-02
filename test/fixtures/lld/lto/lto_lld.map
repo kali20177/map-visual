@@ -1,0 +1,22 @@
+     VMA      LMA     Size Align Out     In      Symbol
+   10094    10094       10     4 .ARM.exidx
+   10094    10094       10     4         <internal>:(.ARM.exidx)
+   100a4    100a4       1a     4 .text
+   100a4    100a4       1a     4         lto.elf.lto.o:(.text.main)
+   100a4    100a4        0     1                 $t
+   100a5    100a5       1a     1                 main
+   100c0    100c0        8     4 .data
+   100c0    100c0        4     4         lto.elf.lto.o:(.data.gate)
+   100c0    100c0        4     1                 gate
+   100c4    100c4        4     4         lto.elf.lto.o:(.data.lto_data)
+   100c4    100c4        4     1                 lto_data
+       0        0       3b     1 .comment
+       0        0       3b     1         <internal>:(.comment)
+       0        0       36     1 .ARM.attributes
+       0        0       36     1         lto.elf.lto.o:(.ARM.attributes)
+       0        0       60     4 .symtab
+       0        0       60     4         <internal>:(.symtab)
+       0        0       4b     1 .shstrtab
+       0        0       4b     1         <internal>:(.shstrtab)
+       0        0       21     1 .strtab
+       0        0       21     1         <internal>:(.strtab)

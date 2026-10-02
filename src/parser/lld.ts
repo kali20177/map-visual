@@ -14,9 +14,30 @@ import type { Warnings } from './warnings';
  *   000101c4 000101c4       1c     4                 main
  *
  * Addresses and sizes are hex without the 0x prefix. Output-section rows have
- * no indentation before the name; input rows carry `file:(section)` (or
- * `file:(COMMON)`), symbol rows carry a bare name. Unlike GNU ld, lld reports
- * real per-symbol sizes — no delta allocation needed.
+ * no indentation before the name; input rows carry `file:(section)`, `file:(COMMON)`
+ * or `archive.a(member.o):(section)`, symbol rows carry a bare name. Unlike
+ * GNU ld, lld reports real per-symbol sizes — no delta allocation needed.
+ *
+ * Symbol names are demangled by default (lld demangles map symbol rows;
+ * `--no-demangle` keeps them mangled — the pipeline's isMangled fallback
+ * demangles those). Mangled names always survive in -ffunction-sections
+ * section names (`.text._ZN...`), where the pipeline recovers them.
+ *
+ * lld never prints fill rows, but consecutive input rows carry absolute
+ * addresses: the gap before an input row (alignment padding, e.g. align-1
+ * data before align-8 data) is synthesized as a `*fill*` row so row sums
+ * reconcile with the ELF's section sizes byte-exactly (mirrors GNU ld's
+ * printed *fill* entries). Trailing bytes are not synthesized — an output
+ * section's size equals its input span plus inter-input gaps in every
+ * observed map, and trusting a self-inconsistent out row would invent bytes
+ * the map never justifies.
+ *
+ * ARM/Thumb: lld prints code-symbol addresses with the Thumb state bit set
+ * (`main` at 0x100ad for section address 0x100ac) — one past the byte address
+ * the ELF symbol table and GNU ld's map carry. For ARM maps (identified by
+ * `.ARM.*` sections or `$t`/`$a` mapping symbols) bit0 is stripped from odd
+ * addresses inside code sections so per-symbol spans tile the section;
+ * genuine odd data addresses are untouched.
  */
 
 // Columns are hex; group 5 captures the (mandatory) separator whitespace and
@@ -36,6 +57,12 @@ interface Contribution {
     /** 1-based raw map line of the input-section row. */
     line: number;
     symbols: { name: string; addr: number; size: number; line: number }[];
+}
+
+interface OutRow {
+    name: string;
+    vma: number;
+    lma: number;
 }
 
 function makeRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 'section' | 'object' | 'status' | 'fromSectionName'> {
@@ -60,6 +87,37 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
     // consumers can group at linker-script granularity instead of the input
     // section (`file:(.text.main)`)
     let outSection: string | null = null;
+    // the enclosing output-section row (name/load image for synthesized fills)
+    // and the address the next input row must start at; null expected = no
+    // extent context (before the first out row)
+    let out: OutRow | null = null;
+    let expected: number | null = null;
+    // ARM/Thumb evidence: a `.ARM.*` output section or a `$t`/`$a` mapping
+    // symbol — both always present in ARM compiler output that contains code
+    let armTarget = false;
+
+    // synthesized alignment padding: no raw map line exists to point at
+    // (same policy as gnuld's `*unsym*` prefix pads), storage follows the
+    // section class via analyze's fill reclassification
+    const emitFill = (start: number, size: number): void => {
+        if (!out || size <= 0) {
+            return;
+        }
+        symbols.push({
+            ...makeRecord(),
+            name: '*fill*',
+            addr: start,
+            size,
+            kind: 'pad',
+            section: out.name,
+            outSection: out.name,
+            object: '[pad]',
+            lma: out.lma,
+            status: 'kept',
+            isFill: true,
+            fromSectionName: false,
+        });
+    };
 
     const flush = (): void => {
         if (!current) {
@@ -126,10 +184,15 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         const desc = row[6];
 
         if (indent.length < 2) {
-            // output-section row: flushes the previous group (which belonged
-            // to the previous output section) and starts a new one
+            // output-section row: flushes the previous group, abandons the
+            // previous extent context, starts a new section
             flush();
-            outSection = desc.trim() || null;
+            out = { name: desc.trim(), vma, lma };
+            outSection = out.name || null;
+            if (out.name.startsWith('.ARM')) {
+                armTarget = true;
+            }
+            expected = vma;
             continue;
         }
 
@@ -137,6 +200,11 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         const input = INPUT_ROW_RE.exec(content);
         if (input) {
             flush();
+            // inter-input gap = alignment padding lld never prints
+            if (expected != null && vma > expected) {
+                emitFill(expected, vma - expected);
+            }
+            expected = vma + size;
             current = {
                 section: input[2] === 'COMMON' ? 'COMMON' : input[2].slice(1, -1),
                 vma,
@@ -150,8 +218,15 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
         }
 
         // symbol row
+        if (content === '$t' || content === '$a') {
+            armTarget = true;
+        }
         if (current) {
-            current.symbols.push({ name: content, addr: vma, size, line: lineNo + 1 });
+            // Thumb state bit: code symbols inside ARM maps print odd (one
+            // past the byte address); data symbols keep their real address
+            const addr =
+                armTarget && (vma & 1) !== 0 && classifySection(current.section) === 'code' ? vma - 1 : vma;
+            current.symbols.push({ name: content, addr, size, line: lineNo + 1 });
         } else {
             warnings.add('symbolWithoutInputSection', { sample: line.trim(), line: lineNo + 1 });
         }
@@ -159,7 +234,8 @@ export function parseLld(text: string, warnings: Warnings): { regions: never[]; 
     flush();
 
     // Input rows without symbol children keep their own size in the
-    // section-level row; lld never reports fills in the map.
+    // section-level row; lld never reports fills in the map — the parser
+    // synthesizes them from consecutive input addresses (see emitFill).
     for (const sym of symbols) {
         if (sym.fromSectionName) {
             sym.mangled = extractSectionSymbol(sym.section);

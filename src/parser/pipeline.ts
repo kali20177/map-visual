@@ -31,7 +31,11 @@ export class MapParseError extends Error {
 
 const SYSTEM_RE =
     /(^|[/\\])(crt[a-z0-9_.+-]*|Scrt1|crt1)\.o$|crtbegin|crtend|libgcc|libstdc\+\+|libnosys|newlib|picolibc|linker stubs|[/\\]lib[/\\]gcc[/\\]|arm-none-eabi[/\\]lib|llvm[^/\\]*[/\\]lib[/\\]/i;
-const LTO_OBJ_RE = /\.ltrans\d*\.o$|\.res\.o$|[/\\]ltrans/i;
+// LTO artifacts: GNU ld's post-LTO split objects (ltrans/res) and lld's
+// synthetic whole-program objects — full LTO renames the input to
+// `<output>.elf.lto.o`, ThinLTO to `<output>.elf.lto.<file>.o` (verified
+// against ld.lld 23.1.2 map files).
+const LTO_OBJ_RE = /\.ltrans\d*\.o$|\.res\.o$|[/\\]ltrans|\.lto(\.[^./\\]+)?\.o$/i;
 
 const demangler = new Demangler();
 

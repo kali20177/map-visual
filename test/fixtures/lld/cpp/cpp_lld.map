@@ -1,0 +1,53 @@
+     VMA      LMA     Size Align Out     In      Symbol
+   10094    10094       10     4 .ARM.exidx
+   10094    10094       10     4         <internal>:(.ARM.exidx)
+   100a4    100a4       18     4 .rodata
+   100a4    100a4        c     4         widget.o:(.rodata._ZTVN3app6WidgetE)
+   100a4    100a4        c     1                 vtable for app::Widget
+   100b0    100b0        c     4         widget.o:(.rodata._ZTVN3app3LedE)
+   100b0    100b0        c     1                 vtable for app::Led
+   100bc    100bc       86     4 .text
+   100bc    100bc        4     4         widget.o:(.text._ZN3app6Widget6renderEi)
+   100bc    100bc        0     1                 $t
+   100bd    100bd        4     1                 app::Widget::render(int)
+   100c0    100c0       1c     4         widget.o:(.text._ZN3app3Led6renderEi)
+   100c0    100c0        0     1                 $t
+   100c1    100c1       1c     1                 app::Led::render(int)
+   100dc    100dc       16     4         widget.o:(.text._GLOBAL__sub_I_widget.cpp)
+   100dc    100dc        0     1                 $t
+   100dd    100dd       16     1                 _GLOBAL__sub_I_widget.cpp
+   100f4    100f4       4e     4         main.o:(.text._start)
+   100f4    100f4        0     1                 $t
+   100f5    100f5       4e     1                 _start
+   10148    10148       20     8 .data
+   10148    10148        4     4         widget.o:(.data._ZN3app4seedE)
+   10148    10148        4     1                 app::seed
+   1014c    1014c        4     4         main.o:(.data._ZN3app1wE)
+   1014c    1014c        4     1                 app::w
+   10150    10150        4     4         main.o:(.data._ZN3app3ledE)
+   10150    10150        4     1                 app::led
+   10154    10154        8     4         main.o:(.data._ZN3app7widgetsE)
+   10154    10154        8     1                 app::widgets
+   1015c    1015c        1     1         main.o:(.data._ZN3app7lead_inE)
+   1015c    1015c        1     1                 app::lead_in
+   10160    10160        8     8         main.o:(.data._ZN3app10wide_probeE)
+   10160    10160        8     1                 app::wide_probe
+   10168    10168        4     4 .init_array
+   10168    10168        4     4         widget.o:(.init_array)
+   1016c    1016c        c     4 .bss
+   1016c    1016c        4     4         widget.o:(.bss._ZN3app6Widget14instance_countE)
+   1016c    1016c        4     1                 app::Widget::instance_count
+   10170    10170        4     4         widget.o:(.bss._ZN3app6gadgetE)
+   10170    10170        4     1                 app::gadget
+   10174    10174        4     4         main.o:(.bss._ZN3appL7scratchE.0)
+   10174    10174        4     1                 app::scratch (.0)
+       0        0       3b     1 .comment
+       0        0       3b     1         <internal>:(.comment)
+       0        0       41     1 .ARM.attributes
+       0        0       41     1         widget.o:(.ARM.attributes)
+       0        0      160     4 .symtab
+       0        0      160     4         <internal>:(.symtab)
+       0        0       64     1 .shstrtab
+       0        0       64     1         <internal>:(.shstrtab)
+       0        0      131     1 .strtab
+       0        0      131     1         <internal>:(.strtab)

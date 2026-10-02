@@ -101,7 +101,10 @@ describe('raw map line invariant — every row points at a real raw line (split-
             const doc = await parseFixture(rel);
             for (const s of doc.symbols) {
                 if (s.line == null) {
-                    expect(s.name, `${rel}: row without a raw line`).toBe('*unsym*');
+                    // 解析器合成的行没有原始行可指：*unsym* 是 GNU ld 贡献内
+                    // 首符号前的垫行，*fill* 是 lld 段间对齐 padding（lld map
+                    // 根本不打印 fill 行，无从借行）
+                    expect(['*unsym*', '*fill*'], `${rel}: row without a raw line`).toContain(s.name);
                     continue;
                 }
                 const raw = lines[s.line - 1];

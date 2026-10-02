@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLld } from '../../src/parser/lld';
 import { Warnings } from '../../src/parser/warnings';
 import { parseMapText } from '../../src/parser/pipeline';
-import { findSym, readFixture } from './helpers';
+import { findSym, parseFixture, readFixture } from './helpers';
 
 const LLD_MAP = `    VMA      LMA     Size Align Out     In      Symbol
 000101c0 000101c0      21c     4 .text
@@ -19,6 +19,7 @@ const LLD_MAP = `    VMA      LMA     Size Align Out     In      Symbol
 00010408 00010408        c     4 .bss
 00010408 00010408        c     4         main.cpp.o:(.bss.buffer)
 00010408 00010408        c     4                 buffer
+00010500 00010500        4     4 .got
 00010500 00010500        4     4         <internal>:(.got)
 `;
 
@@ -105,6 +106,153 @@ describe('lld tabular parser', () => {
             expect(t!.kind).toBe('code');
         });
     });
+
+    // 以下四份 fixture 均由各自 build.sh（clang[++] 23.1.2 + ld.lld 23.1.2）
+    // 生成，真值口径 = llvm-size -B 的 text+data（flash）与 data+bss（ram），
+    // 段级对账方法与 real/ 的黄金基准一致。
+    describe('real ld.lld C++ fixture (lld/cpp, clang++ 23.1.2)', () => {
+        it('matches the ELF truth byte-exactly, alignment fills included', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            expect(doc.format).toBe('lld');
+            expect(doc.warnings).toEqual([]);
+            // llvm-size -B: text 174 + data 36 = 210 flash; data 36 + bss 12 = 48 ram。
+            // 无 fill 合成时会差 5（.text 2 + .data 3 的段间对齐 padding）
+            expect(doc.totals.flash).toBe(210);
+            expect(doc.totals.ram).toBe(48);
+        });
+
+        it('keeps lld-demangled symbol names, recovering mangled from section names', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            // 定论（缺口 #1）：lld map 符号列默认打 demangled 名
+            const led = doc.symbols.find((s) => s.name === 'app::Led::render(int)');
+            expect(led).toBeDefined();
+            expect(led!.size).toBe(0x1c);
+            expect(led!.section).toBe('.text._ZN3app3Led6renderEi');
+            expect(led!.mangled).toBe('_ZN3app3Led6renderEi');
+            const vtable = doc.symbols.find((s) => s.name === 'vtable for app::Widget');
+            expect(vtable!.kind).toBe('rodata');
+            expect(vtable!.mangled).toBe('_ZTVN3app6WidgetE');
+        });
+
+        it('synthesizes *fill* rows for alignment gaps lld never prints', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            const textPad = doc.symbols.find((s) => s.isFill && s.section === '.text');
+            expect(textPad!.addr).toBe(0x100f2);
+            expect(textPad!.size).toBe(2);
+            expect(textPad!.kind).toBe('pad');
+            expect(textPad!.storage).toEqual(['flash']);
+            const dataPad = doc.symbols.find((s) => s.isFill && s.section === '.data');
+            expect(dataPad!.addr).toBe(0x1015d);
+            expect(dataPad!.size).toBe(3);
+            // 初始化段内的 padding 同样占用 flash 载像
+            expect(dataPad!.storage).toEqual(['flash', 'ram']);
+            expect(doc.symbols.filter((s) => s.isFill)).toHaveLength(2);
+        });
+
+        it('classifies .init_array as other with a load image (flash+ram)', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            const init = doc.symbols.find((s) => s.section === '.init_array');
+            expect(init!.kind).toBe('other');
+            expect(init!.storage).toEqual(['flash', 'ram']);
+        });
+
+        it('strips the Thumb state bit from code-symbol addresses in ARM maps', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            // map prints 0x100f5（bit0 = Thumb 状态）；字节地址是 0x100f4，
+            // 与 GNU ld map 的掩码形式一致
+            const start = doc.symbols.find((s) => s.name === '_start')!;
+            expect(start.addr).toBe(0x100f4);
+            // 数据符号保持打印地址原样
+            const seed = doc.symbols.find((s) => s.name === 'app::seed')!;
+            expect(seed.addr).toBe(0x10148);
+        });
+
+        it('demangles the real mangled names through the wasm engine', async () => {
+            const doc = await parseFixture('lld/cpp/cpp_lld.map', { demangle: true });
+            const led = doc.symbols.find((s) => s.mangled === '_ZN3app3Led6renderEi');
+            expect(led!.demangled).toBe('app::Led::render(int)');
+            // `.0` 编号后缀的本地静态符号保留打印名（本就是 demangled 形态）
+            const scratch = doc.symbols.find((s) => s.name === 'app::scratch (.0)');
+            expect(scratch).toBeDefined();
+            expect(scratch!.kind).toBe('bss');
+        });
+    });
+
+    describe('real ld.lld static-library fixture (lld/archive)', () => {
+        it('splits archive members and matches the ELF truth', async () => {
+            const doc = await parseFixture('lld/archive/archive_lld.map');
+            expect(doc.warnings).toEqual([]);
+            // llvm-size -B: text 484 + data 0 = 484 flash; data 0 + bss 64 = 64 ram
+            expect(doc.totals.flash).toBe(484);
+            expect(doc.totals.ram).toBe(64);
+            // 定论（缺口 #2）：成员 In 行形如 `libnet.a(net.o):(.text.net_send)`
+            const send = doc.symbols.find((s) => s.name === 'net_send')!;
+            expect(send.archive).toBe('libnet.a');
+            expect(send.member).toBe('net.o');
+            expect(send.object).toBe('libnet.a(net.o)');
+            expect(send.size).toBe(0x86);
+            const crc = doc.symbols.find((s) => s.name === 'crc32')!;
+            expect(crc.member).toBe('crc.o');
+            // 未被引用的成员（audio.o）与成员内被 gc 的函数从不打印
+            expect(doc.symbols.some((s) => s.name === 'audio_mix')).toBe(false);
+            expect(doc.symbols.some((s) => s.name === 'net_unused')).toBe(false);
+            // 成员段对齐到 4：net_send 止于半字中间，crc32 从字对齐处开始
+            const pad = doc.symbols.find((s) => s.isFill)!;
+            expect(pad!.size).toBe(2);
+            expect(pad!.section).toBe('.text');
+            expect(doc.totals.fillTotal).toBe(2);
+        });
+    });
+
+    describe('real ld.lld gc-sections multi-object fixture (lld/gc)', () => {
+        it('parses COMMON rows as bss and matches the ELF truth', async () => {
+            const doc = await parseFixture('lld/gc/gc_lld.map');
+            expect(doc.warnings).toEqual([]);
+            // llvm-size -B: text 134 + data 16 = 150 flash; data 16 + bss 24 = 40 ram
+            expect(doc.totals.flash).toBe(150);
+            expect(doc.totals.ram).toBe(40);
+            // 定论（缺口 #3）：COMMON 符号按 `util.o:(COMMON)` 逐符号一行
+            const ca = doc.symbols.find((s) => s.name === 'common_a')!;
+            expect(ca.section).toBe('COMMON');
+            expect(ca.kind).toBe('bss');
+            expect(ca.storage).toEqual(['ram']);
+            expect(ca.object).toBe('util.o');
+            // --gc-sections 回收的符号静默缺席
+            expect(doc.symbols.some((s) => s.name === 'util_unused')).toBe(false);
+            expect(doc.symbols.some((s) => s.name === 'unused_table')).toBe(false);
+        });
+
+        it('keeps $d data-in-code mapping symbols and synthesizes .data padding', async () => {
+            const doc = await parseFixture('lld/gc/gc_lld.map');
+            const d = doc.symbols.find((s) => s.name === '$d')!;
+            expect(d.size).toBe(0);
+            expect(d.section).toBe('.text.poolkeeper');
+            // 外层符号覆盖代码+数据（0xe = 14 B 含内联汇编的 .word）
+            const pk = doc.symbols.find((s) => s.name === 'poolkeeper')!;
+            expect(pk.size).toBe(0xe);
+            // align-1 pad_probe 之后 align-8 ll_probe 之前：.data 里 7 字节 padding
+            const pad = doc.symbols.find((s) => s.isFill)!;
+            expect(pad!.addr).toBe(0x10121);
+            expect(pad!.size).toBe(7);
+            expect(pad!.storage).toEqual(['flash', 'ram']);
+        });
+    });
+
+    describe('real ld.lld full-LTO fixture (lld/lto)', () => {
+        it('flags the synthetic .elf.lto.o object as LTO and matches the ELF truth', async () => {
+            const doc = await parseFixture('lld/lto/lto_lld.map');
+            expect(doc.warnings).toEqual([]);
+            // llvm-size -B: text 42 + data 8 = 50 flash; data 8 + bss 0 = 8 ram
+            expect(doc.totals.flash).toBe(50);
+            expect(doc.totals.ram).toBe(8);
+            // 定论（缺口 #4）：full LTO 把输入改名为 `<输出名>.elf.lto.o`
+            const main = findSym(doc, 'main')!;
+            expect(main.object).toBe('lto.elf.lto.o');
+            expect(main.isLto).toBe(true);
+            // 5 = main/gate/lto_data + $t 映射符号 + .ARM.attributes 段级行（同属合成对象）
+            expect(doc.symbols.filter((s) => s.isLto)).toHaveLength(5);
+        });
+    });
 });
 
 describe('lld raw map line capture', () => {
@@ -116,6 +264,6 @@ describe('lld raw map line capture', () => {
         expect(symbols.find((s) => s.name === '_start')!.line).toBe(4);
         const got = symbols.find((s) => s.name === '.got');
         expect(got!.fromSectionName).toBe(true);
-        expect(got!.line).toBe(16);
+        expect(got!.line).toBe(17);
     });
 });

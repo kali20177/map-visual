@@ -49,21 +49,28 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (sym.status === 'discarded') {
         return [];
     }
+    // Fills parse as kind 'pad' but their bytes belong to the enclosing
+    // section — storage follows the section's class (the region-role pass
+    // applies the same rule): a .data fill occupies flash+ram, a .text fill
+    // only flash, a .bss fill only ram, a fill inside non-alloc metadata
+    // nothing. Without this, regionless parsers (lld) would claim ram for
+    // every fill via the load-image rule below.
+    const kind = sym.isFill ? classifySection(sym.section) : sym.kind;
     // Non-alloc annotation/debug content occupies no storage.
-    if (sym.kind === 'meta') {
+    if (kind === 'meta') {
         return [];
     }
     const vmaRegion = regionOf(regions, sym.addr);
     const lmaRegion = sym.lma != null ? regionOf(regions, sym.lma) : undefined;
 
-    if (sym.kind === 'bss') {
+    if (kind === 'bss') {
         return ['ram'];
     }
     // data — and other-kind contributions with a load image (Zephyr's struct
     // sections print under dot-less script names like `._k_heap.static.*`,
-    // classified other), and fills inside an initialized section: the bytes
-    // live in the flash load image and at the runtime address
-    if (sym.kind === 'data' || (sym.kind === 'other' && sym.lma != null) || (sym.isFill && sym.lma != null)) {
+    // classified other): the bytes live in the flash load image and at the
+    // runtime address
+    if (kind === 'data' || (kind === 'other' && sym.lma != null)) {
         const set = new Set<Storage>();
         // initializer bytes live in flash (lma), runtime image in ram (vma)
         if (lmaRegion ? lmaRegion.role === 'flash' : true) {
