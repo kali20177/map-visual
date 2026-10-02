@@ -271,6 +271,11 @@ const theadEl = $('mv-thead');
 const tbodyEl = $('mv-tbody');
 const spacerEl = $('mv-spacer');
 const rowsEl = $('mv-rows');
+// Last html painted into `rowsEl`. Assigning innerHTML replaces every row node,
+// and the browser's double-click counter only accumulates while consecutive
+// presses land on the same node — so repaints whose html did not change must
+// be skipped, or `dblclick` (the universal locate gesture) never fires.
+let rowsHtml = '';
 const footerEl = $('mv-footer');
 const toastEl = $('mv-toast');
 
@@ -618,7 +623,10 @@ function renderWindow(): void {
         </div>`;
         }
     }
-    rowsEl.innerHTML = html;
+    if (html !== rowsHtml) {
+        rowsHtml = html;
+        rowsEl.innerHTML = html;
+    }
 }
 
 function renderFooter(): void {
@@ -686,7 +694,10 @@ function renderTreemap(): void {
         const rects = squarify(items, rect);
         html += rects.map((r) => tmNodeHtml(r, r.key, `${r.label} — ${formatBytes(r.size)}`)).join('');
     }
-    rowsEl.innerHTML = html;
+    if (html !== rowsHtml) {
+        rowsHtml = html;
+        rowsEl.innerHTML = html;
+    }
     spacerEl.style.height = `${tbodyEl.clientHeight}px`;
 }
 
