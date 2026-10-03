@@ -250,6 +250,7 @@ describe('lld tabular parser', () => {
        0        0        0     1 _estack = ORIGIN(RAM) + LENGTH(RAM)
  800410c  800410c       60     4 .text
  800410c  800410c        0     1         . = ALIGN(4)
+ 800410c  800410c        0     1         . += 0x0 - (. - __rom_start_address)
  800410c  800410c        c     4         fault.o:(.text)
  800410c  800410c        0     1                 $t
  800410d  800410d        0     1                 HardFault_Handler
@@ -285,6 +286,9 @@ describe('lld tabular parser', () => {
             expect(names.some((n) => n.includes('ALIGN'))).toBe(false);
             expect(names.some((n) => n.startsWith('LONG('))).toBe(false);
             expect(names.some((n) => n.includes('_fw_signature_start'))).toBe(false);
+            // 复合赋值（zephyr 生成脚本在 rom_start 里打印）：旧正则只认
+            // ` = `，`. += …` 漏判成符号行触发 symbolWithoutInputSection
+            expect(names.some((n) => n.includes('+= '))).toBe(false);
         });
 
         it('skips merged .eh_frame rows and fills their bytes from the extent', async () => {

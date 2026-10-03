@@ -30,7 +30,7 @@ export class MapParseError extends Error {
 }
 
 const SYSTEM_RE =
-    /(^|[/\\])(crt[a-z0-9_.+-]*|Scrt1|crt1)\.o$|crtbegin|crtend|libgcc|libstdc\+\+|libnosys|newlib|picolibc|linker stubs|[/\\]lib[/\\]gcc[/\\]|arm-none-eabi[/\\]lib|llvm[^/\\]*[/\\]lib[/\\]/i;
+    /(^|[/\\])(crt[a-z0-9_.+-]*|Scrt1|crt1)\.o$|crtbegin|crtend|libgcc|libclang_rt|libstdc\+\+|libnosys|newlib|picolibc|linker stubs|[/\\]lib[/\\]gcc[/\\]|arm-none-eabi[/\\]lib|llvm[^/\\]*[/\\]lib[/\\]/i;
 // LTO artifacts: GNU ld's post-LTO split objects (ltrans/res) and lld's
 // synthetic whole-program objects — full LTO renames the input to
 // `<output>.elf.lto.o`, ThinLTO to `<output>.elf.lto.<file>.o` (verified

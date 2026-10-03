@@ -139,3 +139,49 @@ describe('real-world map golden (stm32f103-rb-demo clang+lld, ReleaseClang)', ()
         expect(doc.totals.ram).toBe(4240);
     });
 });
+
+/**
+ * 同一 Zephyr 工程的 clang+lld 产物（自建 clangemb 工具链：Homebrew
+ * clang/ld.lld 23.1.2 + ArmGNUToolchain 13.3 binutils/libgcc + picolibc
+ * 模块源码编译 + CONFIG_CPP/minimal libc++，与上方 gnuarmemb 构建同
+ * Kconfig 结果；工具链与构建命令见 stm32f103-zephyr-demo 仓库的
+ * clang-lld-toolchain/README.md）。
+ * 真值 = arm-none-eabi-size -B 的 text 87552 + data 872 = 88424 flash；
+ * RAM = ELF ALLOC 段中 VMA 落在 RAM 的 size 之和 16131（datas 582 +
+ * bss 6559 + noinit 8704 + log_dynamic_area 124 + log_mpsc_pbuf_area 60 +
+ * device_states 42 + k_sem_area 32 + k_heap_area 24 + log_msg_ptr_area 4）。
+ * 该语料驱动了 SCRIPT_ROW_RE 的复合赋值扩展：Zephyr 生成脚本在 rom_start
+ * 里打印 `. += 0x0 - (. - __rom_start_address)`，旧正则只认 ` = ` 而漏判。
+ */
+describe('real-world map golden (zephyr nucleo_f103rb clang+lld)', () => {
+    it('matches the ELF section truth exactly', async () => {
+        const doc = await parseFixture('real/zephyr-nucleo-f103rb-lld.map');
+        expect(doc.format).toBe('lld');
+        expect(doc.warnings).toEqual([]);
+        expect(doc.totals.flash).toBe(88424);
+        expect(doc.totals.ram).toBe(16131);
+    });
+
+    it('吸收复合赋值语句行、k_heap 领 flash+ram、libclang_rt 标记系统库', async () => {
+        const doc = await parseFixture('real/zephyr-nucleo-f103rb-lld.map');
+        // 语句行（`. +=`、`. =`）不落成符号——demangled 名不含带空格的赋值号
+        expect(doc.symbols.some((s) => s.name.includes(' += ') || s.name.includes(' = '))).toBe(false);
+        // `._k_heap.static.*`：VMA 在 RAM、LMA 在 FLASH 的载像（与 GNU 构建的
+        // _k_heap 断言同款口径）
+        const kheap = doc.symbols.find((s) => s.status === 'kept' && s.section.startsWith('._k_heap.'));
+        expect(kheap).toBeDefined();
+        expect(kheap!.storage).toEqual(['flash', 'ram']);
+        // 无点输出段分类：bss/noinit 内的输入段（.bss.xxx/.noinit.xxx）→ bss，
+        // datas 内的 .data.* → data
+        expect(doc.symbols.some((s) => s.status === 'kept' && s.kind === 'bss' && s.outSection === 'bss')).toBe(true);
+        expect(doc.symbols.some((s) => s.status === 'kept' && s.kind === 'bss' && s.outSection === 'noinit')).toBe(true);
+        const datas = doc.symbols.find((s) => s.status === 'kept' && s.outSection === 'datas');
+        expect(datas).toBeDefined();
+        expect(datas!.kind).toBe('data');
+        // compiler-rt 别名库（内容为 libgcc）成员按系统库过滤，与 GNU 构建
+        // 的 libgcc 成员同待遇
+        const rt = doc.symbols.find((s) => s.archive?.endsWith('libclang_rt.builtins.a'));
+        expect(rt).toBeDefined();
+        expect(rt!.isSystem).toBe(true);
+    });
+});

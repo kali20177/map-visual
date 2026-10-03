@@ -66,10 +66,13 @@ const ROW_RE = /^\s*([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([0-9a-fA
 // phantom contributions double-count their bytes (rb-demo clang+lld).
 const INPUT_ROW_RE = /^(.+):(?<!::)(\(.+\)|COMMON)$/;
 // linker-script statement rows: assignments (`_estack = ...`, `. = ALIGN(4)`,
-// `. = . + 0x200`), script content words (`LONG(0x...)`) and PROVIDE forms.
-// Demangled symbol names never carry " = " (operators demangle to
-// `operator=` without spaces), so the assignment test is safe.
-const SCRIPT_ROW_RE = /\s=\s|^(?:LONG|SHORT|WORD|BYTE|QUAD|SQUAD|ASCIZ|ASCII)\(|^PROVIDE/i;
+// `. = . + 0x200`), compound assignments (`. += 0x0 - (. - x)`, Zephyr's
+// generated scripts print them inside rom_start), script content words
+// (`LONG(0x...)`) and PROVIDE forms. Demangled symbol names never carry
+// spaced assignment operators (operators demangle to `operator+=` without
+// spaces), so the assignment test is safe.
+const SCRIPT_ROW_RE =
+    /\s(?:<<=|>>=|[+\-*/&|^]?=)\s|^(?:LONG|SHORT|WORD|BYTE|QUAD|SQUAD|ASCIZ|ASCII)\(|^PROVIDE/i;
 // synthetic merged contributions (`.eh_frame+0x0`) — stale-addressed, skipped
 const MERGED_SECTION_RE = /\+(?:0x)?[0-9a-fA-F]+$/;
 
