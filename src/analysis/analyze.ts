@@ -66,11 +66,15 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (kind === 'bss') {
         return ['ram'];
     }
-    // data — and other-kind contributions with a load image (Zephyr's struct
-    // sections print under dot-less script names like `._k_heap.static.*`,
-    // classified other): the bytes live in the flash load image and at the
-    // runtime address
-    if (kind === 'data' || (kind === 'other' && sym.lma != null)) {
+    // data — and other-kind contributions with a load image at a DIFFERENT
+    // address (Zephyr's struct sections print under dot-less script names
+    // like `._k_heap.static.*`, classified other): the bytes live in the
+    // flash load image and at the runtime address. An other-kind section
+    // with VMA == LMA is in-place (.init_array walked in flash, script-
+    // emitted signature words) — the load image IS the runtime image, no
+    // RAM claim; region-ful parsers reach the same verdict via region
+    // roles, regionless ones (lld) only have the address equality.
+    if (kind === 'data' || (kind === 'other' && sym.lma != null && sym.lma !== sym.addr)) {
         const set = new Set<Storage>();
         // initializer bytes live in flash (lma), runtime image in ram (vma)
         if (lmaRegion ? lmaRegion.role === 'flash' : true) {

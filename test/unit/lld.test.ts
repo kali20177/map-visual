@@ -5,7 +5,7 @@ import { parseMapText } from '../../src/parser/pipeline';
 import { findSym, parseFixture, readFixture } from './helpers';
 
 const LLD_MAP = `    VMA      LMA     Size Align Out     In      Symbol
-000101c0 000101c0      21c     4 .text
+000101c0 000101c0       20     4 .text
 000101c0 000101c0        4     4         crt0.o:(.text.startup)
 000101c0 000101c0        4     4                 _start
 000101c4 000101c4       1c     4         main.cpp.o:(.text.main)
@@ -13,7 +13,7 @@ const LLD_MAP = `    VMA      LMA     Size Align Out     In      Symbol
 00010300 00010300       10     4 .rodata
 00010300 00010300       10     1         main.cpp.o:(.rodata.table)
 00010300 00010300       10     1                 table
-00010400 00010400        8     4 .data
+00010400 00010400        4     4 .data
 00010400 00010400        4     4         main.cpp.o:(.data.config_version)
 00010400 00010400        4     4                 config_version
 00010408 00010408        c     4 .bss
@@ -115,10 +115,11 @@ describe('lld tabular parser', () => {
             const doc = await parseFixture('lld/cpp/cpp_lld.map');
             expect(doc.format).toBe('lld');
             expect(doc.warnings).toEqual([]);
-            // llvm-size -B: text 174 + data 36 = 210 flash; data 36 + bss 12 = 48 ram。
+            // llvm-size -B: text 174 + data 36 = 210 flash；ram = data 32 + bss 12 = 44。
+            // （.init_array VMA==LMA 原地执行，物理只占 flash——ram 真值不含它）
             // 无 fill 合成时会差 5（.text 2 + .data 3 的段间对齐 padding）
             expect(doc.totals.flash).toBe(210);
-            expect(doc.totals.ram).toBe(48);
+            expect(doc.totals.ram).toBe(44);
         });
 
         it('keeps lld-demangled symbol names, recovering mangled from section names', async () => {
@@ -149,11 +150,13 @@ describe('lld tabular parser', () => {
             expect(doc.symbols.filter((s) => s.isFill)).toHaveLength(2);
         });
 
-        it('classifies .init_array as other with a load image (flash+ram)', async () => {
+        it('classifies .init_array as other and in-place (flash only)', async () => {
             const doc = await parseFixture('lld/cpp/cpp_lld.map');
+            // VMA == LMA：原地执行的内容（__libc_init_array 从 flash 取函数
+            // 指针），没有 RAM 副本——与 gnuld 路径经区域角色的判定一致
             const init = doc.symbols.find((s) => s.section === '.init_array');
             expect(init!.kind).toBe('other');
-            expect(init!.storage).toEqual(['flash', 'ram']);
+            expect(init!.storage).toEqual(['flash']);
         });
 
         it('strips the Thumb state bit from code-symbol addresses in ARM maps', async () => {
@@ -235,6 +238,117 @@ describe('lld tabular parser', () => {
             expect(pad!.addr).toBe(0x10121);
             expect(pad!.size).toBe(7);
             expect(pad!.storage).toEqual(['flash', 'ram']);
+        });
+    });
+
+    // rb-demo clang+lld 真实产物暴露的行形态（lld 23.1.2 实测），每条都是
+    // 一次真实缺陷的回归钉：顶层脚本语句带 1 空格缩进（长得像 out 行）、
+    // 合并 .eh_frame 贡献最后落笔且地址过期、脚本生长段没有任何输入行、
+    // 汇编标号尺寸为 0。
+    describe('lld real-world row shapes (rb-demo clang+lld corpus)', () => {
+        const REAL_SHAPES = `    VMA      LMA     Size Align Out     In      Symbol
+       0        0        0     1 _estack = ORIGIN(RAM) + LENGTH(RAM)
+ 800410c  800410c       60     4 .text
+ 800410c  800410c        0     1         . = ALIGN(4)
+ 800410c  800410c        c     4         fault.o:(.text)
+ 800410c  800410c        0     1                 $t
+ 800410d  800410d        0     1                 HardFault_Handler
+ 800410d  800410d        c     1                 Deflt_Handler
+ 8004140  8004140        c     4         helper.o:(.text.helper)
+ 8004140  8004140        0     1                 $t
+ 8004141  8004141        c     1                 helper_fn
+ 800410c  800410c       28     1         libc.a(libc_a-strlen.o):(.eh_frame+0x0)
+ 8004160  8004160        4     4         crti.o:(.init)
+ 8004160  8004160        0     1                 _init
+ 80124d4  80124d4       40     1 .fw_signature
+ 80124d4  80124d4        0     1         _fw_signature_start = .
+ 80124d4  80124d4        4     1         LONG(0x47535746)
+ 80124d8  80124d8       3c     1         . = _fw_signature_start + 64
+ 8012514  8012514      600     1 ._user_heap_stack
+ 8012514  8012514        0     1         . = ALIGN(8)
+ 8012514  8012514      200     1         . = . + _Min_Heap_Size
+ 8012714  8012714      400     1         . = . + _Min_Stack_Size
+ 20000000 20000000        8     4 .data
+ 20000000 20000000        8     4         main.o:(.data.v)
+ 20000000 20000000        8     1                 v
+       0        0      6bc     1 .log_strings
+       0        0      662     1         main.o:(.log_strings)
+       1        1      661     1                 log_msg
+`;
+
+        it('skips script statements at any indent without warnings', async () => {
+            const w = new Warnings();
+            const { symbols } = parseLld(REAL_SHAPES, w);
+            expect(w.list()).toEqual([]);
+            const names = symbols.map((s) => s.name);
+            expect(names.some((n) => n.includes('_estack'))).toBe(false);
+            expect(names.some((n) => n.includes('ALIGN'))).toBe(false);
+            expect(names.some((n) => n.startsWith('LONG('))).toBe(false);
+            expect(names.some((n) => n.includes('_fw_signature_start'))).toBe(false);
+        });
+
+        it('skips merged .eh_frame rows and fills their bytes from the extent', async () => {
+            const w = new Warnings();
+            const { symbols } = parseLld(REAL_SHAPES, w);
+            // 过期地址（与 fault.o 重叠）的合并贡献行不产出
+            expect(symbols.find((s) => s.section.startsWith('.eh_frame'))).toBeUndefined();
+            const text = symbols.filter((s) => s.outSection === '.text');
+            // extent 0x60 逐字节铺满：span c+c+4 = 0x1c，fill 0x28+0x14+8 = 0x44
+            expect(text.reduce((a, s) => a + s.size, 0)).toBe(0x60);
+            const fills = text.filter((s) => s.isFill);
+            expect(fills.map((f) => [f.addr, f.size])).toEqual([
+                [0x8004118, 0x28],
+                [0x800414c, 0x14],
+                [0x8004164, 8],
+            ]);
+        });
+
+        it('keeps script-grown sections as extent rows', async () => {
+            const doc = await parseMapText(REAL_SHAPES, 'shapes.map', { demangle: false, formatOverride: 'lld' });
+            const fw = doc.symbols.find((s) => s.section === '.fw_signature')!;
+            expect(fw.size).toBe(0x40);
+            expect(fw.kind).toBe('other');
+            expect(fw.fromSectionName).toBe(true);
+            expect(fw.storage).toEqual(['flash']);
+            const heap = doc.symbols.find((s) => s.section === '._user_heap_stack')!;
+            expect(heap.size).toBe(0x600);
+            expect(heap.kind).toBe('bss');
+            expect(heap.storage).toEqual(['ram']);
+        });
+
+        it('collapses same-address aliases and emits *unsym* for unclaimed bytes', async () => {
+            const w = new Warnings();
+            const { symbols } = parseLld(REAL_SHAPES, w);
+            // 汇编标号零尺寸：HardFault_Handler 与 Deflt_Handler 同址
+            // （Thumb bit 剥除后 0x800410c），尺寸归第一个占位者
+            const hard = symbols.find((s) => s.name === 'HardFault_Handler')!;
+            const deflt = symbols.find((s) => s.name === 'Deflt_Handler')!;
+            expect(hard.addr).toBe(0x800410c);
+            expect(deflt.addr).toBe(0x800410c);
+            expect(hard.size).toBe(0);
+            expect(deflt.size).toBe(0xc);
+            // crti.o:(.init) 只有零尺寸符号 _init —— 贡献的 4 字节由 *unsym* 认领
+            const init = symbols.find((s) => s.name === '_init')!;
+            expect(init.size).toBe(0);
+            const unsym = symbols.find((s) => s.name === '*unsym*')!;
+            expect(unsym.addr).toBe(0x8004160);
+            expect(unsym.size).toBe(4);
+            expect(unsym.kind).toBe('code');
+        });
+
+        it('marks unplaced sections (VMA = LMA = 0) as meta without storage', async () => {
+            const doc = await parseMapText(REAL_SHAPES, 'shapes.map', { demangle: false, formatOverride: 'lld' });
+            const log = doc.symbols.find((s) => s.section === '.log_strings')!;
+            expect(log.kind).toBe('meta');
+            expect(log.storage).toEqual([]);
+        });
+
+        it('totals reconcile with the extents byte-exactly', async () => {
+            const doc = await parseMapText(REAL_SHAPES, 'shapes.map', { demangle: false, formatOverride: 'lld' });
+            // flash = .text 0x60 + .fw_signature 0x40 + .data 8 = 168
+            expect(doc.totals.flash).toBe(168);
+            // ram = ._user_heap_stack 0x600 + .data 8 = 1544
+            expect(doc.totals.ram).toBe(1544);
         });
     });
 

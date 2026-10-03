@@ -91,3 +91,51 @@ describe('real-world map golden (zephyr nucleo_f103rb)', () => {
         expect(kheap!.storage).toEqual(['flash', 'ram']);
     });
 });
+
+/**
+ * stm32f103-rb-demo 的 clang+lld 分支产物（Homebrew clang/ld.lld 23.1.2 +
+ * ArmGNUToolchain 13.3 newlib/libstdc++/libgcc 静态库 + 自定义链接脚本 +
+ * LLVM LTO；仓库同源 GCC 产线的黄金基准见上方 rb-demo 描述）。
+ * 真值 = llvm-readelf -S：ALLOC 且非 W 的段之和为 flash（.fw_signature /
+ * .init_array 带 W flag 但 VMA 在 FLASH，物理占 flash）；W 且 VMA 在 RAM
+ * 的段（.data + .bss + ._user_heap_stack）为 ram。该语料驱动了 lld 解析器
+ * 一整轮实战修复：脚本语句行、合并 .eh_frame 过期地址行、地址 0 的未放置
+ * 段、弱别名簇、脚本生长段、乱序输入行（docs/DESIGN.md §13 条目 19）。
+ */
+describe('real-world map golden (stm32f103-rb-demo clang+lld, ReleaseClang)', () => {
+    it('app (LTO + 静态库) matches the ELF section truth exactly', async () => {
+        const doc = await parseFixture('real/stm32f103-rb-demo-lld-app.map');
+        expect(doc.format).toBe('lld');
+        expect(doc.warnings).toEqual([]);
+        // flash = readelf -S 非 W 的 ALLOC 段（75480，.fw_signature/.init_array
+        // 带 W 但 VMA 在 FLASH，原地占 flash）+ .data 的载像副本 656（段表里
+        // 不是独立段，藏在 LOAD segment）= 76208，与 llvm-size text+data 一致；
+        // ram = W 且 VMA 在 RAM（.data 656 + .bss 7328 + ._user_heap_stack
+        // 1536）= 9520。Berkeley size 的 data+bss=9592 把 .fw_signature /
+        // .init_array 误计入 RAM（size(1) 口径局限，见 real/README）。
+        expect(doc.totals.flash).toBe(76208);
+        expect(doc.totals.ram).toBe(9520);
+    });
+
+    it('app 标记 LTO 合成对象、拆分 archive 成员、.log_strings 不认领存储', async () => {
+        const doc = await parseFixture('real/stm32f103-rb-demo-lld-app.map');
+        expect(doc.symbols.some((s) => s.isLto && s.object === 'UART-Dbg.elf.lto.o')).toBe(true);
+        // 合并 .eh_frame 贡献行（过期地址）被跳过，字节由 fill 吸收
+        expect(doc.symbols.some((s) => s.section.startsWith('.eh_frame+'))).toBe(false);
+        const u8g2 = doc.symbols.find((s) => s.archive?.endsWith('libu8g2.a'));
+        expect(u8g2).toBeDefined();
+        expect(u8g2!.member).toBeTruthy();
+        const log = doc.symbols.find((s) => s.section === '.log_strings');
+        expect(log).toBeDefined();
+        expect(log!.kind).toBe('meta');
+        expect(log!.storage).toEqual([]);
+    });
+
+    it('boot matches the ELF section truth exactly', async () => {
+        const doc = await parseFixture('real/stm32f103-rb-demo-lld-boot.map');
+        expect(doc.format).toBe('lld');
+        expect(doc.warnings).toEqual([]);
+        expect(doc.totals.flash).toBe(8164);
+        expect(doc.totals.ram).toBe(4240);
+    });
+});

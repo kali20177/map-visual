@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 231 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 242 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
 

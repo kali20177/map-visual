@@ -1,0 +1,314 @@
+     VMA      LMA     Size Align Out     In      Symbol
+       0        0        0     1 _estack = ORIGIN(RAM) + LENGTH(RAM)
+       0        0        0     1 _sstack = ORIGIN(RAM)
+       0        0        0     1 _Min_Heap_Size = 0
+       0        0        0     1 _Min_Stack_Size = 0x400
+ 8000000  8000000      10c     1 .isr_vector
+ 8000000  8000000        0     1         . = ALIGN(4)
+ 8000000  8000000      10c     1         CMakeFiles/boot.dir/Core/Startup/startup_stm32f103rbtx.s.obj:(.isr_vector)
+ 8000000  8000000        0     1                 g_pfnVectors
+ 800010c  800010c        0     1         . = ALIGN(4)
+ 800010c  800010c     1ca4     4 .text
+ 800010c  800010c        0     1         . = ALIGN(4)
+ 800010c  800010c       48     4         CMakeFiles/boot.dir/Core/Startup/startup_stm32f103rbtx.s.obj:(.text.Reset_Handler)
+ 800010c  800010c        0     1                 $t
+ 800010d  800010d       34     1                 Reset_Handler
+ 800011a  800011a        0     1                 CopyDataInit
+ 8000120  8000120        0     1                 LoopCopyDataInit
+ 800012e  800012e        0     1                 FillZerobss
+ 8000132  8000132        0     1                 LoopFillZerobss
+ 8000140  8000140        0     1                 $d
+ 8000154  8000154        2     1         CMakeFiles/boot.dir/Core/Startup/startup_stm32f103rbtx.s.obj:(.text.Default_Handler)
+ 8000154  8000154        0     1                 Infinite_Loop
+ 8000154  8000154        0     1                 $t
+ 8000154  8000154        2     1                 Default_Handler
+ 8000155  8000155        2     1                 NMI_Handler
+ 8000155  8000155        2     1                 HardFault_Handler
+ 8000155  8000155        2     1                 MemManage_Handler
+ 8000155  8000155        2     1                 BusFault_Handler
+ 8000155  8000155        2     1                 UsageFault_Handler
+ 8000155  8000155        2     1                 SVC_Handler
+ 8000155  8000155        2     1                 DebugMon_Handler
+ 8000155  8000155        2     1                 PendSV_Handler
+ 8000155  8000155        2     1                 WWDG_IRQHandler
+ 8000155  8000155        2     1                 PVD_IRQHandler
+ 8000155  8000155        2     1                 TAMPER_IRQHandler
+ 8000155  8000155        2     1                 RTC_IRQHandler
+ 8000155  8000155        2     1                 FLASH_IRQHandler
+ 8000155  8000155        2     1                 RCC_IRQHandler
+ 8000155  8000155        2     1                 EXTI0_IRQHandler
+ 8000155  8000155        2     1                 EXTI1_IRQHandler
+ 8000155  8000155        2     1                 EXTI2_IRQHandler
+ 8000155  8000155        2     1                 EXTI3_IRQHandler
+ 8000155  8000155        2     1                 EXTI4_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel1_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel2_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel3_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel4_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel5_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel6_IRQHandler
+ 8000155  8000155        2     1                 DMA1_Channel7_IRQHandler
+ 8000155  8000155        2     1                 ADC1_2_IRQHandler
+ 8000155  8000155        2     1                 USB_HP_CAN1_TX_IRQHandler
+ 8000155  8000155        2     1                 USB_LP_CAN1_RX0_IRQHandler
+ 8000155  8000155        2     1                 CAN1_RX1_IRQHandler
+ 8000155  8000155        2     1                 CAN1_SCE_IRQHandler
+ 8000155  8000155        2     1                 EXTI9_5_IRQHandler
+ 8000155  8000155        2     1                 TIM1_BRK_IRQHandler
+ 8000155  8000155        2     1                 TIM1_UP_IRQHandler
+ 8000155  8000155        2     1                 TIM1_TRG_COM_IRQHandler
+ 8000155  8000155        2     1                 TIM1_CC_IRQHandler
+ 8000155  8000155        2     1                 TIM2_IRQHandler
+ 8000155  8000155        2     1                 TIM3_IRQHandler
+ 8000155  8000155        2     1                 TIM4_IRQHandler
+ 8000155  8000155        2     1                 I2C1_EV_IRQHandler
+ 8000155  8000155        2     1                 I2C1_ER_IRQHandler
+ 8000155  8000155        2     1                 I2C2_EV_IRQHandler
+ 8000155  8000155        2     1                 I2C2_ER_IRQHandler
+ 8000155  8000155        2     1                 SPI1_IRQHandler
+ 8000155  8000155        2     1                 SPI2_IRQHandler
+ 8000155  8000155        2     1                 USART1_IRQHandler
+ 8000155  8000155        2     1                 USART2_IRQHandler
+ 8000155  8000155        2     1                 USART3_IRQHandler
+ 8000155  8000155        2     1                 EXTI15_10_IRQHandler
+ 8000155  8000155        2     1                 RTC_Alarm_IRQHandler
+ 8000155  8000155        2     1                 USBWakeUp_IRQHandler
+ 8000158  8000158       48     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-init.o):(.text.__libc_init_array)
+ 8000158  8000158        0     1                 $t
+ 8000159  8000159       48     1                 __libc_init_array
+ 8000190  8000190        0     1                 $d
+ 80001a0  80001a0        6     2         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-aeabi_memclr.o):(.text.__aeabi_memclr)
+ 80001a0  80001a0        0     1                 $t
+ 80001a1  80001a1        6     1                 __aeabi_memclr
+ 80001a1  80001a1        6     1                 __aeabi_memclr8
+ 80001a1  80001a1        6     1                 __aeabi_memclr4
+ 80001a6  80001a6        a     2         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-aeabi_memset.o):(.text.__aeabi_memset)
+ 80001a6  80001a6        0     1                 $t
+ 80001a7  80001a7        a     1                 __aeabi_memset
+ 80001a7  80001a7        a     1                 __aeabi_memset8
+ 80001a7  80001a7        a     1                 __aeabi_memset4
+ 80001b0  80001b0       10     2         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-memset.o):(.text.memset)
+ 80001b0  80001b0        0     1                 $t
+ 80001b1  80001b1       10     1                 memset
+ 80001c0  80001c0       10     2         boot.elf.lto.o:(.text.SysTick_Handler)
+ 80001c0  80001c0        0     1                 $t
+ 80001c1  80001c1       10     1                 SysTick_Handler
+ 80001d0  80001d0        2     2         boot.elf.lto.o:(.text.SystemInit)
+ 80001d0  80001d0        0     1                 $t
+ 80001d1  80001d1        2     1                 SystemInit
+ 80001d4  80001d4      746     4         boot.elf.lto.o:(.text.main)
+ 80001d4  80001d4        0     1                 $t
+ 80001d5  80001d5      746     1                 main
+ 80002e4  80002e4        0     1                 $d
+ 80002e8  80002e8        0     1                 $t
+ 800091c  800091c      1aa     4         boot.elf.lto.o:(.text._ZN12_GLOBAL__N_110slot_flashEv)
+ 800091c  800091c        0     1                 $t
+ 800091d  800091d      1aa     1                 (anonymous namespace)::slot_flash()
+ 8000ac6  8000ac6       40     2         boot.elf.lto.o:(.text._ZN3LOG7dictlog4emitILNS0_5LevelE3EJEEEvjPKcDpT0_)
+ 8000ac6  8000ac6        0     1                 $t
+ 8000ac7  8000ac7       40     1                 void LOG::dictlog::emit<(LOG::dictlog::Level)3>(unsigned int, char const*)
+ 8000b08  8000b08       24     4         boot.elf.lto.o:(.text._ZL18__NVIC_SystemResetv)
+ 8000b08  8000b08        0     1                 $t
+ 8000b09  8000b09       24     1                 __NVIC_SystemReset()
+ 8000b2c  8000b2c       40     2         boot.elf.lto.o:(.text._ZN3LOG7dictlog4emitILNS0_5LevelE2EJEEEvjPKcDpT0_)
+ 8000b2c  8000b2c        0     1                 $t
+ 8000b2d  8000b2d       40     1                 void LOG::dictlog::emit<(LOG::dictlog::Level)2>(unsigned int, char const*)
+ 8000b6c  8000b6c      6a4     4         boot.elf.lto.o:(.text._ZN12_GLOBAL__N_111update_modeEv)
+ 8000b6c  8000b6c        0     1                 $t
+ 8000b6d  8000b6d      6a4     1                 (anonymous namespace)::update_mode()
+ 8001210  8001210       3a     2         boot.elf.lto.o:(.text._ZN12_GLOBAL__N_117update_flag_clearEv)
+ 8001210  8001210        0     1                 $t
+ 8001211  8001211       3a     1                 (anonymous namespace)::update_flag_clear()
+ 800124c  800124c       42     4         boot.elf.lto.o:(.text._ZN12_GLOBAL__N_18jump_appEv)
+ 800124c  800124c        0     1                 $t
+ 800124d  800124d       42     1                 (anonymous namespace)::jump_app()
+ 800128e  800128e       40     2         boot.elf.lto.o:(.text._ZN3LOG7dictlog4emitILNS0_5LevelE1EJEEEvjPKcDpT0_)
+ 800128e  800128e        0     1                 $t
+ 800128f  800128f       40     1                 void LOG::dictlog::emit<(LOG::dictlog::Level)1>(unsigned int, char const*)
+ 80012d0  80012d0       c0     4         boot.elf.lto.o:(.text._ZN4Boot12validate_appERPKNS_8SigBlockE)
+ 80012d0  80012d0        0     1                 $t
+ 80012d1  80012d1       c0     1                 Boot::validate_app(Boot::SigBlock const*&)
+ 8001390  8001390       1e     4         boot.elf.lto.o:(.text._ZN4Boot16serial_write_strEPKc)
+ 8001390  8001390        0     1                 $t
+ 8001391  8001391       1e     1                 Boot::serial_write_str(char const*)
+ 80013b0  80013b0       5e     4         boot.elf.lto.o:(.text._ZN4Boot16serial_write_u32Ej)
+ 80013b0  80013b0        0     1                 $t
+ 80013b1  80013b1       5e     1                 Boot::serial_write_u32(unsigned int)
+ 8001410  8001410       5c     4         boot.elf.lto.o:(.text._ZN4Boot17serial_read_exactEPhjjj)
+ 8001410  8001410        0     1                 $t
+ 8001411  8001411       5c     1                 Boot::serial_read_exact(unsigned char*, unsigned int, unsigned int, unsigned int)
+ 800146c  800146c       b8     4         boot.elf.lto.o:(.text._ZN4Boot19flash_erase_page_atEj)
+ 800146c  800146c        0     1                 $t
+ 800146d  800146d       b8     1                 Boot::flash_erase_page_at(unsigned int)
+ 8001524  8001524       d6     4         boot.elf.lto.o:(.text._ZN4Boot13flash_programEjPKhj)
+ 8001524  8001524        0     1                 $t
+ 8001525  8001525       d6     1                 Boot::flash_program(unsigned int, unsigned char const*, unsigned int)
+ 80015fc  80015fc       c0     4         boot.elf.lto.o:(.text._ZN4Boot12_GLOBAL__N_116read_packet_bodyEhRhRPhRtj)
+ 80015fc  80015fc        0     1                 $t
+ 80015fd  80015fd       c0     1                 Boot::(anonymous namespace)::read_packet_body(unsigned char, unsigned char&, unsigned char*&, unsigned short&, unsigned int)
+ 80016bc  80016bc       ac     4         boot.elf.lto.o:(.text._ZN4Boot12_GLOBAL__N_19slot_failEPKc)
+ 80016bc  80016bc        0     1                 $t
+ 80016bd  80016bd       ac     1                 Boot::(anonymous namespace)::slot_fail(char const*)
+ 8001768  8001768       5e     4         boot.elf.lto.o:(.text._ZN3HAL9STM32F1xx6GPIO_t4initEtjjj)
+ 8001768  8001768        0     1                 $t
+ 8001769  8001769       5e     1                 HAL::STM32F1xx::GPIO_t::init(unsigned short, unsigned int, unsigned int, unsigned int)
+ 80017c6  80017c6       62     2         boot.elf.lto.o:(.text._ZN3Dev6W25Q648jedec_idEv)
+ 80017c6  80017c6        0     1                 $t
+ 80017c7  80017c7       62     1                 Dev::W25Q64::jedec_id()
+ 8001828  8001828       9a     4         boot.elf.lto.o:(.text._ZN3Dev6W25Q644readEjPvj)
+ 8001828  8001828        0     1                 $t
+ 8001829  8001829       9a     1                 Dev::W25Q64::read(unsigned int, void*, unsigned int)
+ 80018c4  80018c4      12e     4         boot.elf.lto.o:(.text.HAL_SPI_Transmit)
+ 80018c4  80018c4        0     1                 $t
+ 80018c5  80018c5      12e     1                 HAL_SPI_Transmit
+ 80019f2  80019f2       30     2         boot.elf.lto.o:(.text.SPI_EndRxTxTransaction)
+ 80019f2  80019f2        0     1                 $t
+ 80019f3  80019f3       30     1                 SPI_EndRxTxTransaction
+ 8001a24  8001a24       ba     4         boot.elf.lto.o:(.text.SPI_WaitFlagStateUntilTimeout)
+ 8001a24  8001a24        0     1                 $t
+ 8001a25  8001a25       ba     1                 SPI_WaitFlagStateUntilTimeout
+ 8001ae0  8001ae0      2ae     4         boot.elf.lto.o:(.text.HAL_SPI_Receive)
+ 8001ae0  8001ae0        0     1                 $t
+ 8001ae1  8001ae1      2ae     1                 HAL_SPI_Receive
+ 8001d8e  8001d8e        8     2         boot.elf.lto.o:(.text.raw_log_callsite)
+ 8001d8e  8001d8e        0     1                 $t
+ 8001d8f  8001d8f        8     1                 raw_log_callsite
+ 8001d98  8001d98        4     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/crti.o:(.init)
+ 8001d98  8001d98        0     1                 $t
+ 8001d99  8001d99        0     1                 _init
+ 8001d9c  8001d9c        8     2         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/crtn.o:(.init)
+ 8001d9c  8001d9c        0     1                 $t
+ 8001da4  8001da4        4     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/crti.o:(.fini)
+ 8001da4  8001da4        0     1                 $t
+ 8001da5  8001da5        0     1                 _fini
+ 8001da8  8001da8        8     2         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/bin/../lib/gcc/arm-none-eabi/13.3.1/thumb/v7-m/nofp/crtn.o:(.fini)
+ 8001da8  8001da8        0     1                 $t
+ 8001db0  8001db0        0     1         . = ALIGN(4)
+ 8001db0  8001db0        0     1         _etext = .
+ 8001db0  8001db0      224     4 .rodata
+ 8001db0  8001db0        0     1         . = ALIGN(4)
+ 8001db0  8001db0      1b3     1         <internal>:(.rodata.str1.1)
+ 8001f64  8001f64       40     4         <internal>:(.rodata.cst32)
+ 8001fa4  8001fa4       28     4         boot.elf.lto.o:(.rodata._ZZN3Dev6W25Q6415decode_geometryEjE4MBIT)
+ 8001fa4  8001fa4       28     1                 Dev::W25Q64::decode_geometry(unsigned int)::MBIT
+ 8001fcc  8001fcc        8     1         <internal>:(.rodata.cst8)
+ 8001fd4  8001fd4        0     1         . = ALIGN(4)
+ 8001fd4  8001fd4        0     1 .ARM.extab
+ 8001fd4  8001fd4        0     1         . = ALIGN(4)
+ 8001fd4  8001fd4        0     1         . = ALIGN(4)
+ 8001fd4  8001fd4       10     4 .ARM
+ 8001fd4  8001fd4        0     1         . = ALIGN(4)
+ 8001fd4  8001fd4        0     1         __exidx_start = .
+ 8001fd4  8001fd4       10     4         <internal>:(.ARM.exidx)
+ 8001fe4  8001fe4        0     1         __exidx_end = .
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1 .preinit_array
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1         PROVIDE_HIDDEN (__preinit_array_start = .)
+ 8001fe4  8001fe4        0     1         PROVIDE_HIDDEN (__preinit_array_end = .)
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1 .init_array
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1         PROVIDE_HIDDEN (__init_array_start = .)
+ 8001fe4  8001fe4        0     1         PROVIDE_HIDDEN (__init_array_end = .)
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1 .fini_array
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1         . = ALIGN(4)
+ 8001fe4  8001fe4        0     1 _sidata = LOADADDR(.data)
+20000000 20000000        0     1 .data
+20000000 20000000        0     1         . = ALIGN(4)
+20000000 20000000        0     1         _sdata = .
+20000000 20000000        0     1         . = ALIGN(4)
+20000000 20000000        0     1         _edata = .
+20000000 20000000        0     1 . = ALIGN(4)
+20000000 20000000      c8c     4 .bss
+20000000 20000000        0     1         _sbss = .
+20000000 20000000        0     1         __bss_start__ = _sbss
+20000000 20000000       20     4         boot.elf.lto.o:(.bss._ZZN12_GLOBAL__N_110slot_flashEvE1f)
+20000000 20000000       20     1                 (anonymous namespace)::slot_flash()::f
+20000020 20000020        1     1         boot.elf.lto.o:(.bss._ZGVZN12_GLOBAL__N_110slot_flashEvE1f)
+20000020 20000020        1     1                 guard variable for (anonymous namespace)::slot_flash()::f
+20000021 20000021        1     1         boot.elf.lto.o:(.bss._ZZN12_GLOBAL__N_110slot_flashEvE9bus_ready)
+20000021 20000021        1     1                 (anonymous namespace)::slot_flash()::bus_ready
+20000024 20000024       5c     4         boot.elf.lto.o:(.bss._ZZN3HAL9STM32F1xx5SPI_t7convertEP11SPI_TypeDefE4spi2)
+20000024 20000024       5c     1                 HAL::STM32F1xx::SPI_t::convert(SPI_TypeDef*)::spi2
+20000080 20000080      400     4         boot.elf.lto.o:(.bss._ZN4Boot12_GLOBAL__N_111g_crc_tableE)
+20000080 20000080      400     1                 Boot::(anonymous namespace)::g_crc_table
+20000480 20000480      400     1         boot.elf.lto.o:(.bss._ZN4Boot12_GLOBAL__N_19s_payloadE)
+20000480 20000480      400     1                 Boot::(anonymous namespace)::s_payload
+20000880 20000880      400     1         boot.elf.lto.o:(.bss._ZN4Boot12_GLOBAL__N_16s_pageE)
+20000880 20000880      400     1                 Boot::(anonymous namespace)::s_page
+20000c80 20000c80        4     4         boot.elf.lto.o:(.bss.uwTick)
+20000c80 20000c80        4     1                 uwTick
+20000c84 20000c84        1     1         boot.elf.lto.o:(.bss._ZN3LOG7dictlog12_GLOBAL__N_17g_readyE)
+20000c84 20000c84        1     1                 LOG::dictlog::(anonymous namespace)::g_ready
+20000c88 20000c88        4     4         boot.elf.lto.o:(.bss._SEGGER_RTT.3)
+20000c88 20000c88        4     1                 _SEGGER_RTT.3
+20000c8c 20000c8c        0     1         . = ALIGN(4)
+20000c8c 20000c8c        0     1         _ebss = .
+20000c8c 20000c8c        0     1         __bss_end__ = _ebss
+20000c8c 20000c8c      404     1 ._user_heap_stack
+20000c8c 20000c8c        4     1         . = ALIGN(8)
+20000c90 20000c90        0     1         . = . + _Min_Heap_Size
+20000c90 20000c90      400     1         . = . + _Min_Stack_Size
+20001090 20001090        0     1         . = ALIGN(8)
+       0        0      308     1 .log_strings
+       0        0        0     1         . = ALIGN(4)
+       0        0        0     1         _log_strings_start = .
+       0        0      305     1         boot.elf.lto.o:(.log_strings)
+       0        0       27     1                 main::dl_str_198
+      27       27       3f     1                 main::dl_str_209
+      66       66       2a     1                 main::dl_str_217
+      90       90       2d     1                 main::dl_str_219
+      bd       bd       2a     1                 main::dl_str_223
+      e7       e7       26     1                 main::dl_str_231
+     10d      10d       37     1                 main::dl_str_237
+     144      144       16     1                 main::dl_str_242
+     15a      15a       1c     1                 main::dl_str_246
+     176      176       29     1                 (anonymous namespace)::update_mode()::dl_str_120
+     19f      19f       20     1                 (anonymous namespace)::update_mode()::dl_str_134
+     1bf      1bf       3c     1                 (anonymous namespace)::update_mode()::dl_str_138
+     1fb      1fb       28     1                 (anonymous namespace)::update_mode()::dl_str_146
+     223      223       30     1                 (anonymous namespace)::update_mode()::dl_str_153
+     253      253       3a     1                 Boot::slot_present(Dev::W25Q64&, Boot::SlotHeader&)::dl_str_46
+     28d      28d       27     1                 Boot::slot_copy_to_app(Dev::W25Q64&)::dl_str_62
+     2b4      2b4       26     1                 Boot::slot_copy_to_app(Dev::W25Q64&)::dl_str_117
+     2da      2da       21     1                 Boot::slot_copy_to_app(Dev::W25Q64&)::dl_str_128
+     2fb      2fb        a     1                 Boot::(anonymous namespace)::slot_fail(char const*)::dl_str_29
+     305      305        0     1         _log_strings_end = .
+     305      305        3     1         . = ALIGN(4)
+       0        0       25     1 .ARM.attributes
+       0        0       25     1         CMakeFiles/boot.dir/Core/Startup/startup_stm32f103rbtx.s.obj:(.ARM.attributes)
+       0        0      33c     4 .debug_frame
+       0        0       2c     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-init.o):(.debug_frame)
+      2c       2c       20     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-aeabi_memclr.o):(.debug_frame)
+      4c       4c       20     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-aeabi_memset.o):(.debug_frame)
+      6c       6c       20     4         /Applications/ArmGNUToolchain/13.3.rel1/arm-none-eabi/arm-none-eabi/lib/thumb/v7-m/nofp/libc_nano.a(libc_a-memset.o):(.debug_frame)
+      8c       8c      2b0     4         boot.elf.lto.o:(.debug_frame)
+       0        0     1ab5     1 .debug_loclists
+       0        0     1ab5     1         boot.elf.lto.o:(.debug_loclists)
+       0        0      bfb     1 .debug_abbrev
+       0        0      bfb     1         boot.elf.lto.o:(.debug_abbrev)
+       0        0     64f1     1 .debug_info
+       0        0     64f1     1         boot.elf.lto.o:(.debug_info)
+       0        0      4ef     1 .debug_rnglists
+       0        0      4ef     1         boot.elf.lto.o:(.debug_rnglists)
+       0        0      d6c     1 .debug_str_offsets
+       0        0      d6c     1         boot.elf.lto.o:(.debug_str_offsets)
+       0        0     3221     1 .debug_str
+       0        0     3221     1         <internal>:(.debug_str)
+       0        0      4d0     1 .debug_addr
+       0        0      4d0     1         boot.elf.lto.o:(.debug_addr)
+       0        0       3b     1 .comment
+       0        0       3b     1         <internal>:(.comment)
+       0        0     2761     1 .debug_line
+       0        0     2761     1         boot.elf.lto.o:(.debug_line)
+       0        0      cc3     1 .debug_line_str
+       0        0      cc3     1         <internal>:(.debug_line_str)
+       0        0      c60     4 .symtab
+       0        0      c60     4         <internal>:(.symtab)
+       0        0      13c     1 .shstrtab
+       0        0      13c     1         <internal>:(.shstrtab)
+       0        0      e7f     1 .strtab
+       0        0      e7f     1         <internal>:(.strtab)

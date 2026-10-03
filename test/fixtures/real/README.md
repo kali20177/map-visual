@@ -15,9 +15,27 @@
   `noinit`/`k_*_area`/`log_*_area`，含带 `load address` 的两行式形态）、
   `ASSERT` 脚本行、`DEVNULL_ROM` 降级、`._k_heap.*` 类带载像 other 贡献。
 
+- `stm32f103-rb-demo-lld-{app,boot}.map` — 同一工程 `stm32f103-rb-demo`
+  的 **clang + lld 分支**（`try-clang-lld`，2026-10-03 构建产物）：
+  Homebrew clang/ld.lld 23.1.2 + ArmGNUToolchain 13.3 的
+  newlib/libstdc++/libgcc 静态库 + 自定义链接脚本 + LLVM LTO（app），
+  只保留 `.map`（boot 23 KB / app 242 KB）。覆盖：链接脚本语句行
+  （赋值/`ALIGN`/`LONG`/`PROVIDE`，任意缩进）、合并 `.eh_frame` 的过期
+  地址行（`+0x0` 后缀）、地址 0 的未放置段（`.log_strings`）、脚本生长段
+  （`._user_heap_stack`/`.fw_signature`）、弱别名簇、Thumb bit0、
+  `lib*.a(member.o)` archive 行与 `UART-Dbg.elf.lto.o` LTO 合成对象。
+  这批语料驱动了 lld 解析器 2026-10-03 的实战修复轮
+  （docs/DESIGN.md §13 条目 19）。
+
 真值口径（golden 断言见 `test/unit/realmap.test.ts`）：
 
 - rb-demo boot：FLASH 7648 B = `arm-none-eabi-size` 的 text(7600)+data(48)；
   RAM 6360 B = ELF 段级 `.data`+`.bss`+`._user_heap_stack` 之和。
 - zephyr：FLASH 77256 B = `arm-none-eabi-size` 的 text(76432)+data(824)；
   RAM 16054 B = ELF VMA 落在 RAM 的全部 ALLOC 段之和。
+- rb-demo lld app：FLASH 76208 B = `llvm-size -B` 的 text(75480)+data(728)
+  （.data 载像在 LOAD segment 里，段表无独立条目）；RAM 9520 B = readelf -S
+  中 W flag 且 VMA 在 RAM 的段（.data 656 + .bss 7328 + ._user_heap_stack
+  1536）。Berkeley 的 data+bss=9592 把 `.fw_signature`/`.init_array`（W flag
+  但 VMA 在 FLASH，原地）误计入 RAM——size(1) 口径局限，同 GNU 产线注记。
+- rb-demo lld boot：FLASH 8164 B / RAM 4240 B，同口径。
