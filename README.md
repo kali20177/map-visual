@@ -76,7 +76,7 @@ See [docs/CLI.md](docs/CLI.md) for the full contract.
 | Toolchain | Status |
 |---|---|
 | GNU ld (`gcc`, `arm-none-eabi-gcc`) | ✅ verified against real firmware builds |
-| LLVM lld (`ld.lld`) | ✅ verified against real builds |
+| LLVM lld (`ld.lld`) | ✅ verified against real builds (C++/demangling, static libraries, `--gc-sections`, LTO) |
 | Keil armlink | planned |
 | IAR ilink | planned |
 

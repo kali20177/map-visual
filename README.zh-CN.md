@@ -76,7 +76,7 @@ node dist/cli.js diff old.map new.map
 | 工具链 | 状态 |
 |---|---|
 | GNU ld（`gcc`、`arm-none-eabi-gcc`） | ✅ 真实固件构建验证 |
-| LLVM lld（`ld.lld`） | ✅ 真实产物验证 |
+| LLVM lld（`ld.lld`） | ✅ 真实产物验证（C++ 还原、静态库、`--gc-sections`、LTO） |
 | Keil armlink | 规划中 |
 | IAR ilink | 规划中 |
 
