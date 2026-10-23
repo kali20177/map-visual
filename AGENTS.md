@@ -13,7 +13,7 @@ npm test               # vitest（test/unit/）
 npm run prepare        # 安装 simple-git-hooks pre-commit（lint-staged）
 ```
 
-提交前四项全绿（typecheck / lint / coupling / test，当前基线 245 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
+提交前四项全绿（typecheck / lint / coupling / test，当前基线 280 项测试）。pre-commit 会自动对暂存文件 `eslint --fix`。
 
 调试：VSCode 打开本目录按 `F5`（扩展开发宿主），工作区放一个 `.map` 文件，`Alt+M` 或双击打开即可实测。
 
@@ -38,7 +38,7 @@ node dist/cli.js diff old.map new.map                      # 符号级增减 + �
 - `src/webview/`（main / model / diff / treemap / i18n）— webview 运行时（浏览器沙箱），禁止 vscode 与 node 内置模块；`i18n.ts` 的 `tr()` 读宿主内联的 `#mv-l10n` bundle，未命中即回落英文原文
 - `src/protocol.ts` — 三层消息协议；`src/types.ts` — 跨层 IR 契约（新增共享类型放这里，不要放 analysis/，dependency-cruiser 会拦）；解析告警的英文模板 `WARNING_TEMPLATES` 也在这里——worker 树按 code 渲染英文 `message`（CLI 契约），webview 按同一个模板查译文
 - `package.nls.json` `package.nls.zh-cn.json` — 清单静态文案的译文（命令标题、设置描述；清单里写 `%key%`）；`l10n/bundle.l10n.zh-cn.json` — 运行时文案的译文（key 即英文原文，逐字节一致）
-- `test/unit/` — vitest；`test/fixtures/` — 32 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、gnuld-xtensa（Xtensa/ESP-IDF 形态合成 fixture）、gnuld-riscv（RISC-V ESP32-C3/C2 形态合成 fixture），两者的真实工程对账矩阵见各自 README；lld/、real/（外部真实工程黄金基准：rb-demo + zephyr，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
+- `test/unit/` — vitest；`test/fixtures/` — 34 份 map fixture：gnuld-x86（移植自 imgui-gl3-glfw3-base）、gnuld-arm（build.sh 实际构建）、gnuld-xtensa（Xtensa/ESP-IDF 形态合成 fixture）、gnuld-riscv（RISC-V ESP32-C3/C2 形态合成 fixture），两者的真实工程对账矩阵见各自 README；lld/、real/（外部真实工程黄金基准：rb-demo + zephyr + arduino-esp32/PlatformIO 各一份，见该目录 README），fixture 的 .map 是黄金基准，改动解析器必须保持全部通过
 - `docs/` — DESIGN（§13 实现偏差必读）与 CLI（M6 命令行通道的设计契约）入库；FORMATS（map 格式圣经）、RESEARCH（竞品调研：Map View Embedded、linkermapviz、Emma、puncover、bloaty）为本地 AI 参考文档，不入库（与 REVIEW-* 同策略，见 .gitignore）
 
 ## 架构边界（由 ESLint + dependency-cruiser 强制，勿绕过）

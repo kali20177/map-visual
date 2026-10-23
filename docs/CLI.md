@@ -7,7 +7,7 @@
 ## 1. 背景与目标
 
 AI 编码助手（ZCode / Claude Code / Cursor 等）都能执行 shell 命令。当前它们要看懂一份 linker map
-只能肉眼扫几千行文本；CLI 化之后，一条命令就能拿到经过 22 份黄金基准 fixture 验证的精确数字
+只能肉眼扫几千行文本；CLI 化之后，一条命令就能拿到经过 34 份黄金基准 fixture 验证的精确数字
 （区域占用与 `--print-memory-usage`、ELF 段级真值对齐），以及内置 WASM demangle 后的符号名——
 AI 不必再外调 `c++filt`，也不必自己实现尺寸语义（bss 的 load address 陷阱、LTO 快照行、双计入等
 `docs/FORMATS.md` 里的坑都已由解析器消化）。
@@ -72,7 +72,7 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-
 ```
 
 - `<file>` 均为必选位置参数；`--kind`/`--status` 可重复（OR 语义）；`--section`/`--object`/`--filter` 为正则/子串匹配。
-- `symbols` 默认按 size 降序（AI 的第一问永远是"谁最大"），且默认折叠 `meta`、隐藏 `discarded`（对齐 webview 默认视图），`--kind meta` / `--status discarded` 显式放开。
+- `symbols` 默认按 size 降序（AI 的第一问永远是"谁最大"），且默认折叠 `meta`、隐藏 `discarded`（对齐 webview 默认视图），`--kind meta` / `--status discarded` 显式放开。**预留窗口（`isReserve`：`*dummy` / `*noload` 输出段）无条件折叠**——它们是 NOBITS 地址占位、本就不进 flash/ram，列出来会让 IDF map 的"最大符号"变成 1.4 MB 的占位行；`--kind` / `--status` 都不放开它。
 - `treemap --by section` 按**输出段**（`outSection`，linker script 粒度，如 `.text`、Zephyr 的无点 `text`）分组——GNU ld 的 `section` 列混合输入段名（`.text.foo`）与输出段头两种粒度，直接拿来做顶层键会产出"每输入段一行 + 同名输出段只剩 fill 残渣"的坏视图；无输出段上下文的行（loose fills、discarded 列表）回落 `section`。
 - `summary`/`symbols`/`treemap`/`diff` 成功输出 JSON 到 stdout，四命令均带 `warnings`（diff 为 `A:`/`B:` 前缀合并）；**MapParseError.kind 类错误**（退出码 3–7）在 stderr 输出单行 JSON `{"error":{"kind":"notfound","message":"..."}}`；**usage 错误**（退出码 2）stderr 为人类可读消息 + Usage 帮助（见 §10 偏差 4）。
 
@@ -111,7 +111,7 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-
 }
 
 // symbols —— { ..., "count": N, "totals": {...}, "symbols": [SymbolRecord...] }（行结构与 webview 完全一致，
-//            含 `outSection` 输出段名字段）
+//            含 `outSection` 输出段名字段；`isReserve` 行不出现，`count` 也不含它们）
 // treemap —— { ..., "tree": [ { "name": ".text", "size": 5980, "count": 42, "children": [
 //                { "name": "main.o", "size": 812, "count": 3, "children": [ { "name": "main", "size": 100, "count": 1 } ] } ] } ] }
 //            顶层数组按 size 降序；depth 由 --depth 截断；Σ 同级 size == 父 size（§7 属性测试）；
@@ -190,8 +190,8 @@ CLI 属于 worker 树的消费者，必须与 worker 同等约束。按 AGENTS.m
 | 用例 | 断言 |
 |---|---|
 | summary 黄金基准 | rb-demo `flash===7648 && ram===6360`；zephyr `77256/16054`；gnuld-arm `4152/260`（fixture 路径以 `test/fixtures/real/README` 为准） |
-| 全量 fixture | summary 全部不抛错、`format` 识别正确（22 份） |
-| symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；默认折叠 meta、隐藏 discarded；`--no-demangle` 时 `demangled===null`；行携带 `outSection` |
+| 全量 fixture | summary 全部不抛错、`format` 识别正确（当前 34 份） |
+| symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；默认折叠 meta、隐藏 discarded；预留窗口（`isReserve`）无条件折叠（S3 fixture：kept 23 → 17 行）；`--no-demangle` 时 `demangled===null`；行携带 `outSection` |
 | treemap 属性 | 全量 fixture：Σ 同级 children 的 size 与 count 都等于父级，总量 == kept 非 meta 总量；`--depth 1/2` 截断正确 |
 | treemap 输出段回归 | rb-demo 顶层 `.text` > 5 KB（修复前仅 8 B 的 fill 残渣）、zephyr 顶层节点 < 200（修复前 1188）且 `text` 节点 > 60 KB |
 | loose fill 探针 | 合成 map 两场景（无段头 / LOAD 后 stale header）：回落分支的分组落点与告警（22 份语料零命中该分支，见 §10.14） |
@@ -255,3 +255,4 @@ CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 14. **loose fill 回落分支补告警与探针**（复核轮 N4）：22 份语料对该分支零命中（`outSection` 全非 null）；gnuld 对输出段之外的 fill 补告警——有段头名时明示 `possibly stale header`（LOAD/OUTPUT 边界后 `currentSectionHeader` 可能过期，正是混层复发的入口），无段头时提示 `no section header seen`；合成探针两场景进 cli.test.ts。
 15. **cli-allowlist 的 from 改 `^src/cli` 前缀**（复核轮 N4 附注）：文件枚举对 M7 新增 CLI 文件（stdin/MCP server）不设防，前缀式默认覆盖，`to` 侧 pathNot 同步用前缀；经临时文件故意违规复测。
 16. **warnings 条目新增 `code` / `params`**（2026-10-02，界面本地化配套）：`message` 仍是渲染好的英文成品、逐字未变（现有断言与脚本按它写，继续有效）；新增字段供界面按显示语言重渲染（`region "OCRAM" holds…` 这类含动态内容的告警无法整串查表翻译）。两者由 `src/types.ts` 的 `WARNING_TEMPLATES` 同一张表渲染，不会各自漂移；CLI 自身不消费新字段。
+17. **`symbols` / `diff` 折叠预留窗口 `isReserve`**（2026-10-23，ESP-IDF 多 target 审核收口）：`.ext_ram.dummy` / `.flash_rodata_dummy` / `.flash.rodata_noload` 等 NOBITS 地址窗口本就不进 flash/ram 与 treemap（`0c5186c` 起 `analyze` 侧排除），但 `symbols --top` 仍按 size 排序把它们排到第一（真实 S3 map 1.44 MB / 1.11 MB），`diff` 也会拿 `.flash.rodata_noload` 的 13 KB 行报 changed 而 totals 不动——同一份 map 的两个口径互相矛盾。现在两处与 webview 列表/Top 10 一起跳过 `isReserve`，且不设开关（占位窗口不是符号）；`totals.keptCount` 仍是解析行数（含预留行），`count` 是折叠后的行数。

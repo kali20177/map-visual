@@ -101,6 +101,28 @@ describe('filterAndSort', () => {
         expect(without.every((r) => !r.sym.object.includes('main.cpp'))).toBe(true);
         expect(without.length).toBe(3); // foo, g_buf, crt_row
     });
+
+    it('folds placeholder (reserve) windows out of the list', () => {
+        // 预留窗口在 totals 与 treemap 里都不存在；列表若仍按 size 排序，
+        // 真实 IDF map 的首屏会是两块 1 MB+ 的 NOBITS 占位行。
+        const rows = filterAndSort(
+            doc([
+                sym({ name: 'main', size: 100, addr: 0x100 }),
+                sym({
+                    name: '*fill*',
+                    size: 1_441_760,
+                    kind: 'pad',
+                    isFill: true,
+                    isReserve: true,
+                    outSection: '.ext_ram.dummy',
+                    addr: 0x3c000020,
+                }),
+                sym({ name: 'log_str', size: 13_159, kind: 'rodata', isReserve: true, outSection: '.flash.rodata_noload', addr: 0x3c0000b0 }),
+            ]),
+            ui(),
+        );
+        expect(rows.map((r) => r.sym.name)).toEqual(['main']);
+    });
 });
 
 describe('parseFilterTerms', () => {

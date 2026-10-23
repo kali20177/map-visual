@@ -21,7 +21,10 @@ interface Aggregated {
 function aggregate(doc: MapDocument): Map<string, Aggregated> {
     const map = new Map<string, Aggregated>();
     for (const sym of doc.symbols) {
-        if (sym.status === 'discarded' || sym.isFill) {
+        // Reserve windows (`*dummy`/`*noload`) carry no image bytes and stay
+        // out of the totals — showing them as per-symbol changes would make
+        // rows grow while flash/ram do not.
+        if (sym.status === 'discarded' || sym.isFill || sym.isReserve) {
             continue;
         }
         const key = sym.mangled ?? sym.name;

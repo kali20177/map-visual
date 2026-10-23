@@ -18,7 +18,12 @@ describe('section kind vocabulary', () => {
             '.wifislprxiram.23',
             '.phyiram.19',
             '.WindowVectors.text',
+            '.Level2InterruptVector.text',
             '.Level3InterruptVector.text',
+            '.Level6InterruptVector.text',
+            '.DoubleExceptionVector.text',
+            '.DebugExceptionVector.text',
+            '.NMIExceptionVector.text',
             '.exception_vectors.text',
             '.exception_vectors_table.text',
             '.conn_iram1.25',
@@ -27,6 +32,11 @@ describe('section kind vocabulary', () => {
         ]) {
             expect(classifySection(name), name).toBe('code');
         }
+    });
+
+    it('does not mistake other .level* names for vectors', () => {
+        // `.level2interrupt` 起的前缀替代了原先宽泛的 `.level`
+        expect(classifySection('.leveldb.data')).toBe('other');
     });
 
     it('classifies Xtensa/RISC-V metadata and small data', () => {
@@ -44,5 +54,15 @@ describe('section kind vocabulary', () => {
         expect(classifySection('.dram0.bt.bss')).toBe('bss');
         expect(classifySection('.ext_ram.bss.0')).toBe('bss');
         expect(classifySection('.ext_ram_noinit.foo')).toBe('bss');
+    });
+
+    it('resolves the plain IDF output-section names, not their prefixes', () => {
+        // arduino-esp32 maps print `*fill*` rows whose section is the output
+        // section name; `.dram` → data and `.iram` → code would misplace them.
+        expect(classifySection('.dram0.bss')).toBe('bss');
+        expect(classifySection('.dram0.noinit')).toBe('bss');
+        expect(classifySection('.iram0.bss')).toBe('bss');
+        expect(classifySection('.iram0.data')).toBe('data');
+        expect(classifySection('.iram0.text')).toBe('code');
     });
 });

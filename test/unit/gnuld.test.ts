@@ -538,6 +538,32 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
         expect(symbols[N - 1].name).toBe(`fn${N - 1}`);
     });
 
+    it('backtracks to the choice point when a nested forced chain dead-ends', () => {
+        // Two contributions at 0x0 (stale LTO / relax re-print) + a forced
+        // chain behind the wrong one. Only `a2 + e` tiles 0x10: trying `a1`
+        // reaches 0x4, where the lone `b` (2 B) leads into a 2 B hole. The
+        // iterative search pushes a frame only for same-VMA siblings, so the
+        // frame sits two units behind the path tip — backtracking has to
+        // truncate the whole path, not pop one unit (which kept `a1` and
+        // emitted a1 + a2 + e = 0x14 with no warning).
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text           0x8000000       0x10',
+                ' .text.a1       0x8000000        0x4 a.o',
+                ' .text.a2       0x8000000        0x8 a.o',
+                ' .text.b        0x8000004        0x2 a.o',
+                ' .text.e        0x8000008        0x8 a.o',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        expect(symbols.map((s) => s.section)).toEqual(['.text.a2', '.text.e']);
+        expect(symbols.reduce((a, s) => a + s.size, 0)).toBe(0x10);
+    });
+
     it('ignores the --cref cross-reference table after the memory map', () => {
         // `-Wl,--cref` (xiaozhi-esp32) appends a symbol→file table; long file
         // paths wrap onto indented lines without a section/address. They must

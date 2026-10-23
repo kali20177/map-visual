@@ -409,10 +409,16 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
         // The budget counts backtracks instead of placements: a clean chain
         // costs nothing regardless of section size, while a pathological
         // ambiguous layout still stops after 20k retries.
+        // Each frame snapshots the path length at its choice point: forced
+        // (single-candidate) steps push no frame, so a frame's cursor may be
+        // many units behind the path tip. Backtracking must therefore
+        // truncate the path to that depth — popping one unit would keep the
+        // stale prefix and emit overlapping contributions (a sibling choice
+        // followed by a forced chain that dead-ends is enough to hit it).
         const budget = { visits: 20000 };
         let budgetExhausted = false;
         const path: OutUnit[] = [];
-        const frames: { next: number; cursor: number }[] = [];
+        const frames: { next: number; cursor: number; depth: number }[] = [];
         let cursor = start;
         let i = 0;
         let chain: OutUnit[] | null = null;
@@ -435,7 +441,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
             }
             if (pick >= 0) {
                 if (pick + 1 < viable.length && unitVma(viable[pick + 1].u) === cursor) {
-                    frames.push({ next: pick + 1, cursor });
+                    frames.push({ next: pick + 1, cursor, depth: path.length });
                 }
                 path.push(viable[pick].u);
                 cursor += unitSize(viable[pick].u);
@@ -451,7 +457,7 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 break;
             }
             const frame = frames.pop()!;
-            path.pop();
+            path.length = frame.depth;
             cursor = frame.cursor;
             i = frame.next;
         }

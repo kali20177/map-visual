@@ -172,6 +172,20 @@ describe('cli symbols — filtering and sorting', () => {
         expect(j.symbols.every((s) => s.status === 'discarded')).toBe(true);
     });
 
+    it('folds placeholder (reserve) windows — they are not symbols', async () => {
+        // ESP-IDF 的 `.ext_ram.dummy` / `.flash_rodata_dummy` 是 NOBITS 地址
+        // 窗口，totals/treemap 早就不计它们；symbols 若照列，"谁最大"的答案
+        // 会是 1.4 MB 的占位行。
+        const j = jsonOut<SymbolsJson>(await runCli(['symbols', fx('gnuld-xtensa/esp32s3.map')], ENV));
+        expect(j.symbols.every((s) => !s.isReserve)).toBe(true);
+        expect(j.symbols.some((s) => s.outSection === '.ext_ram.dummy')).toBe(false);
+        expect(j.symbols.some((s) => s.outSection === '.flash.rodata_noload')).toBe(false);
+        // 最大的真实行是 32 B 的 .bss.buf —— 被折叠的预留行是 0x100/0x60/0x40
+        expect(j.symbols[0]).toMatchObject({ name: 'buf', size: 32 });
+        // 解析结果本身不变：kept 23 = 17 行 + 5 个预留行 + 1 个 meta 行
+        expect(j.count).toBe(j.totals.keptCount - 5 - 1);
+    });
+
     it('--filter matches mangled and demangled names', async () => {
         // no_demangle fixture 的符号行是 mangled 形态，经 WASM demangle 后可按 demangled 命中
         const j = jsonOut<SymbolsJson>(

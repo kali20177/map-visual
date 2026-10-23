@@ -93,6 +93,22 @@ describe('diffDocuments', () => {
         expect(d.rows[0].status).toBe('same');
     });
 
+    it('ignores reserve windows so rows never move without the totals', () => {
+        // `.flash.rodata_noload` 的行不计入 flash；若 diff 仍按符号比较，
+        // 就会出现"某个符号涨了 13 KB、flash 一点没变"的自相矛盾。
+        const a = doc('a.map', [
+            sym({ name: 'f', size: 10 }),
+            sym({ name: 'wlog', size: 100, kind: 'rodata', isReserve: true, outSection: '.flash.rodata_noload' }),
+        ]);
+        const b = doc('b.map', [
+            sym({ name: 'f', size: 10 }),
+            sym({ name: 'wlog', size: 300, kind: 'rodata', isReserve: true, outSection: '.flash.rodata_noload' }),
+        ]);
+        const d = diffDocuments(a, b);
+        expect(d.rows.map((r) => r.name)).toEqual(['f']);
+        expect(d.rows[0].status).toBe('same');
+    });
+
     it('sorts by impact (|delta| desc), added before removed', () => {
         const a = doc('a.map', [sym({ name: 'big', size: 100 })]);
         const b = doc('b.map', [

@@ -504,7 +504,14 @@ function renderSummary(): void {
     const metaRow = t.kindTotals.meta > 0 ? kindRow('meta', tr('non-alloc')) : '';
 
     const top = doc.symbols
-        .filter((s) => s.status === 'kept' && !s.isFill && s.size > 0 && state.ui.kinds[s.kind])
+        .filter(
+            (s) =>
+                s.status === 'kept' &&
+                !s.isFill &&
+                !s.isReserve &&
+                s.size > 0 &&
+                state.ui.kinds[s.kind],
+        )
         .sort((a, b) => b.size - a.size)
         .slice(0, 10);
     const topHtml = top

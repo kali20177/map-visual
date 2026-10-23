@@ -3,19 +3,44 @@ import { EMPTY_KIND_TOTALS } from '../types';
 import { classifySection } from '../parser/classify';
 import type { Warnings } from '../parser/warnings';
 
-function regionOf(regions: MemoryRegion[], addr: number): MemoryRegion | undefined {
-    return regions.find((r) => addr >= r.origin && addr < r.origin + r.length);
+/**
+ * Every region containing `addr`. Same-address alias windows make "first
+ * match" arbitrary: ESP32-S3's `drom0_0_seg` and `extern_ram_seg` share
+ * `0x3c000020`, and ESP32-C6/P4's `irom_seg`/`drom_seg` share `0x42000020`.
+ */
+function regionsAt(regions: MemoryRegion[], addr: number): MemoryRegion[] {
+    return regions.filter((r) => addr >= r.origin && addr < r.origin + r.length);
 }
 
 /**
- * ESP-IDF's segment names are canonical across targets and are stronger
+ * The region that owns `addr` for storage purposes. When several regions
+ * alias the same address, prefer the one whose role matches where those
+ * bytes live: code/rodata in the flash windows, data/bss in RAM. Without
+ * this, a `data` symbol inside the DROM/PSRAM window resolved to the flash
+ * alias and claimed no RAM.
+ */
+function regionFor(regions: MemoryRegion[], addr: number, prefer: 'flash' | 'ram'): MemoryRegion | undefined {
+    const hits = regionsAt(regions, addr);
+    return hits.find((r) => r.role === prefer) ?? hits[0];
+}
+
+/**
+ * ESP-IDF's segment names are canonical per target family and are stronger
  * evidence than content mass: `iram0_2_seg` is the IROM window despite its
  * name, and a small app can legitimately carry more IRAM code than IROM
  * code (classic ESP32 hello_world: 51.7 KB IRAM vs 47.4 KB IROM), which
- * makes a pure code-mass vote call IRAM flash. Exact names only — other
- * vendors' regions still go through the content anchors.
+ * makes a pure code-mass vote call IRAM flash.
+ *
+ * Two naming generations (verified against esp-idf 5.5.5 memory.ld.in):
+ *  - esp32 / s2 / s3 / c2 / c3: `iram0_0_seg` + `iram0_2_seg` + `dram0_0_seg`
+ *    + `drom0_0_seg`, plus `rtc_*`;
+ *  - c5 / c6 / c61 / h2 / h21 / h4 / p4: `irom_seg` + `drom_seg` (flash
+ *    windows, same address on c6/p4) and a unified `sram_seg`, plus
+ *    `lp_ram_seg` / `lp_reserved_seg` and an `ext_ram_seg` PSRAM window.
+ * Exact names only — other vendors' regions still go through the anchors.
  */
 const IDF_REGION_ROLES: Readonly<Record<string, 'flash' | 'ram'>> = {
+    // classic / S2 / S3 / C2 / C3 skeleton
     iram0_0_seg: 'ram',
     iram0_2_seg: 'flash',
     irom0_0_seg: 'flash',
@@ -28,6 +53,15 @@ const IDF_REGION_ROLES: Readonly<Record<string, 'flash' | 'ram'>> = {
     rtc_fast_reserved_seg: 'ram',
     rtc_slow_reserved_seg: 'ram',
     extern_ram_seg: 'ram',
+    // C5 / C6 / C61 / H2 / H21 / H4 / P4 skeleton
+    irom_seg: 'flash',
+    drom_seg: 'flash',
+    sram_seg: 'ram',
+    lp_ram_seg: 'ram',
+    lp_reserved_seg: 'ram',
+    ext_ram_seg: 'ram',
+    spm_idram_seg: 'ram',
+    rev3_mspi_workaround_seg: 'ram',
 };
 
 /** Region-name families used when the content anchors leave a region open. */
@@ -38,12 +72,16 @@ const RAM_NAME_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|rtc|data)/i;
 
 /** Sum of the kept, non-fill rows of one kind per region (VMA). */
 function kindMass(regions: MemoryRegion[], symbols: SymbolRecord[], kind: SymbolKind): Map<MemoryRegion, number> {
+    // Data/bss live in RAM; code/rodata in the flash windows. The preference
+    // only matters for same-address aliases, where the row belongs to the
+    // region matching its runtime home.
+    const prefer: 'flash' | 'ram' = kind === 'data' || kind === 'bss' ? 'ram' : 'flash';
     const mass = new Map<MemoryRegion, number>();
     for (const s of symbols) {
         if (s.status !== 'kept' || s.isFill || s.isReserve || s.kind !== kind || s.size <= 0) {
             continue;
         }
-        const region = regionOf(regions, s.addr);
+        const region = regionFor(regions, s.addr, prefer);
         if (region) {
             mass.set(region, (mass.get(region) ?? 0) + s.size);
         }
@@ -107,9 +145,10 @@ export function assignRegionRoles(regions: MemoryRegion[], symbols: SymbolRecord
         return;
     }
     for (const r of regions) {
-        const role = IDF_REGION_ROLES[r.name];
-        if (role) {
-            r.role = role;
+        // `hasOwn` because the table is an object literal: `constructor` /
+        // `toString` as a region name would otherwise inherit Object.prototype.
+        if (Object.hasOwn(IDF_REGION_ROLES, r.name)) {
+            r.role = IDF_REGION_ROLES[r.name];
         }
     }
     anchorByMass(regions, symbols, 'code', 'flash');
@@ -161,8 +200,9 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (kind === 'meta') {
         return [];
     }
-    const vmaRegion = regionOf(regions, sym.addr);
-    const lmaRegion = sym.lma != null ? regionOf(regions, sym.lma) : undefined;
+    const vmaRegion = regionFor(regions, sym.addr, kind === 'data' || kind === 'bss' ? 'ram' : 'flash');
+    // the load image lives in flash; on an aliased window prefer the flash role
+    const lmaRegion = sym.lma != null ? regionFor(regions, sym.lma, 'flash') : undefined;
 
     if (kind === 'bss') {
         return ['ram'];

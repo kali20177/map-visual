@@ -98,6 +98,69 @@ describe('region role assignment', () => {
         const used = Object.fromEntries(totals.regions.map((r) => [r.region.name, r.used]));
         expect(used).toEqual({ drom0_0_seg: 0x20, extern_ram_seg: 0x40, dram0_0_seg: 0x10 });
     });
+
+    it('resolves an aliased data window to RAM, not the flash alias', () => {
+        // 同址别名窗口里同时有 flash 与 ram 两个 region：data 的运行时副本
+        // 在 PSRAM（ram），载像在 flash。按声明顺序 first-match 会只记
+        // flash，把这块 RAM 漏掉。
+        const regions = [
+            region('drom0_0_seg', 0x3c000020, 0x2000000),
+            region('extern_ram_seg', 0x3c000020, 0x2000000),
+        ];
+        const symbols = [sym({ name: 'ps', kind: 'data', addr: 0x3c020000, size: 0x10 })];
+        assignRegionRoles(regions, symbols);
+        expect(regions.map((r) => r.role)).toEqual(['flash', 'ram']);
+        const doc = {
+            format: 'gnu-ld',
+            file: 't',
+            regions,
+            symbols,
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            warnings: [],
+        } as unknown as MapDocument;
+        const totals = computeStorageAndTotals(doc);
+        expect(totals.flash).toBe(0x10);
+        expect(totals.ram).toBe(0x10);
+        expect(symbols[0].storage).toEqual(['flash', 'ram']);
+    });
+
+    it('trusts the newer IDF region skeleton (C6/H2/P4 naming generation)', () => {
+        // esp-idf 5.5：c5/c6/c61/h2/h21/h4/p4 用 irom_seg/drom_seg/sram_seg/
+        // lp_ram_seg/lp_reserved_seg（irom/drom 在 c6/p4 还同址）。sram_seg
+        // 是 IRAM+DRAM 合一的 RWX 区，IRAM 代码多于 IROM 时若靠质量投票会
+        // 被判 flash —— 与经典 ESP32 同一个错误，只是换了段名。
+        const regions = [
+            region('irom_seg', 0x42000020, 0x400000),
+            region('drom_seg', 0x42000020, 0x400000),
+            region('sram_seg', 0x40800000, 0x6e610),
+            region('lp_ram_seg', 0x50000000, 0x4000),
+            region('lp_reserved_seg', 0x50004000, 0x10),
+        ];
+        const symbols = [
+            sym({ name: 'flash_fn', kind: 'code', addr: 0x42000100, size: 0x40 }),
+            sym({ name: 'iram_fn', kind: 'code', addr: 0x40800100, size: 0x50 }),
+            sym({ name: 'tab', kind: 'rodata', addr: 0x42010000, size: 0x20 }),
+            sym({ name: 'var', kind: 'data', addr: 0x40801000, size: 0x10 }),
+            sym({ name: 'buf', kind: 'bss', addr: 0x40802000, size: 0x20 }),
+            sym({ name: 'rtc_fn', kind: 'code', addr: 0x50000000, size: 0x8 }),
+            sym({ name: 'rtc_data', kind: 'data', addr: 0x50004000, size: 0x8 }),
+        ];
+        assignRegionRoles(regions, symbols);
+        expect(regions.map((r) => r.role)).toEqual(['flash', 'flash', 'ram', 'ram', 'ram']);
+        const doc = {
+            format: 'gnu-ld',
+            file: 't',
+            regions,
+            symbols,
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            warnings: [],
+        } as unknown as MapDocument;
+        const totals = computeStorageAndTotals(doc);
+        // flash = irom 代码 0x40 + IRAM 代码 0x50 + rodata 0x20 + 两份 data 0x18 + RTC 代码 0x8
+        expect(totals.flash).toBe(0xd0);
+        // ram = IRAM 代码 0x50 + sram data 0x10 + bss 0x20 + RTC 代码 0x8 + RTC data 0x8
+        expect(totals.ram).toBe(0x90);
+    });
 });
 
 describe('region role conflict warnings (review P5, REVIEW-26a5b23)', () => {

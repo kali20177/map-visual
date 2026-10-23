@@ -50,10 +50,14 @@
    `iram0_2_seg`（0x42000020）是 IROM 的 flash 指令窗口 → flash。
    注意经典 ESP32 的 `hello_world` 里 IRAM 51.7 KB > IROM 47.4 KB，纯
    code 质量投票会投反——因此 IDF 段名（`IDF_REGION_ROLES`）优先于质量锚点。
+   该表同时固定 IDF 5.5 的第二代命名（c5/c6/c61/h2/h21/h4/p4 的
+   `irom_seg`/`drom_seg`/`sram_seg`/`lp_ram_seg`/`lp_reserved_seg`/
+   `ext_ram_seg`）；这 7 个 target 没有真实 map 入库，归属按链接脚本
+   固定、未经实测对账。
 2. **预留窗口**：`.ext_ram.dummy` / `.flash_rodata_dummy`（二者同址重叠）/
    `.dram0.dummy` / `.flash.rodata_noload`，以及 NOLOAD 尾
    `.iram0.text_end` / `.dram0.heap_start`；只占地址窗口，不进 flash/ram、
-   kind 汇总、fill 汇总与 treemap。
+   kind 汇总、fill 汇总，也不进 treemap、列表/Top 10、`symbols` 与 diff。
 3. **Xtensa 输入段族**：`.wifirxiram/.wifi0iram/.wifislprxiram`、
    `.wifiextrairam/.wifislpiram`、`.phyiram`（WiFi/PHY 代码）；
    `.literal/.lit4`（字面量池）；`.xt./.xtensa.`（非分配元数据）；
@@ -80,3 +84,5 @@
 
 `test/unit/esp32.test.ts` 钉住：flash `0xE8`、ram `0x90`、各 region 角色与
 used、`pad`/`fillTotal` 只剩真实的 `0x4` 对齐填充、treemap 不含预留段。
+`test/unit/cli.test.ts` 另钉住 `symbols` 折叠预留窗口（kept 23 → 17 行，
+最大的真实行是 32 B 的 `.bss.buf` 而不是 0x100 的 `.ext_ram.dummy`）。

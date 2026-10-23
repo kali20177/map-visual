@@ -113,6 +113,13 @@ export function parseFilterTerms(query: string): FilterTerms {
 }
 
 function matchesFilter(sym: SymbolRecord, ui: UiState, terms: FilterTerms): boolean {
+    // Placeholder address windows (`*dummy`/`*noload`) hold no image bytes;
+    // they are folded out of the composition bar and the treemap, so the row
+    // list must agree — otherwise the largest row on screen is a MB-scale
+    // reservation the Flash/RAM totals never counted.
+    if (sym.isReserve) {
+        return false;
+    }
     if (!ui.showDiscarded && sym.status === 'discarded') {
         return false;
     }

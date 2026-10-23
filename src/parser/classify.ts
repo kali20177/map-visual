@@ -6,6 +6,11 @@ import type { SymbolKind } from '../types';
  * Grounded in the fixture corpus; see docs/FORMATS.md §1.6.
  */
 const PREFIX_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
+    // Xtensa's `vectors.S` emits a `.DebugExceptionVector.text` code stub. It
+    // must precede the DWARF `.debug*` rule below — arduino-esp32 3.3.x keeps
+    // this vector (IDF's own build did not surface it), and classifying it as
+    // non-alloc meta dropped 6 B of IRAM code from the totals.
+    ['.debugexceptionvector', 'code'],
     // meta — non-alloc, debug/annotation
     ['.debug', 'meta'],
     ['.stab', 'meta'],
@@ -41,6 +46,13 @@ const PREFIX_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
     ['.plt', 'code'],
     ['.iplt', 'code'],
     ['.vectors', 'code'],
+    // IDF IRAM output sections other than `.iram0.text`: the generic `.iram`
+    // rule below would call all of them code. Input rows keep their own names
+    // (`.data.*`, `.bss.*`), but `*fill*` rows inherit the output-section name,
+    // so the exact names must be resolved correctly. `.iram0.bss` is NOLOAD
+    // (ram-only); `.iram0.data` is loadable.
+    ['.iram0.bss', 'bss'],
+    ['.iram0.data', 'data'],
     ['.iram', 'code'],
     // ESP-IDF WiFi ROM-patch routines are emitted straight into IRAM under
     // these names; they are code despite not starting with `.text`
@@ -58,7 +70,13 @@ const PREFIX_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
     // classifySection lowercases first, so these tokens must be lowercase.
     ['.windowvectors', 'code'],
     ['.doubleexceptionvector', 'code'],
-    ['.level', 'code'],
+    // Levels 2–6 are the maskable interrupt vectors Xtensa's vectors.S emits
+    // (level 1 is NMI, level 7 does not exist on these cores)
+    ['.level2interrupt', 'code'],
+    ['.level3interrupt', 'code'],
+    ['.level4interrupt', 'code'],
+    ['.level5interrupt', 'code'],
+    ['.level6interrupt', 'code'],
     // RISC-V exception vectors (ESP32-C3/C6/H2) live in .iram0.text
     ['.exception_vectors', 'code'],
     // ESP32-C2 BT controller IRAM payloads (BLE release-IRAM layout):
@@ -107,6 +125,11 @@ const PREFIX_TABLE: ReadonlyArray<readonly [string, SymbolKind]> = [
     // BT LE release-IRAM layout: .dram0.bt.bss must be matched before the
     // generic `.dram` → data rule (it is a NOBITS section)
     ['.dram0.bt.bss', 'bss'],
+    // Same trap for the plain IDF output sections: `.dram0.bss` / `.dram0.noinit`
+    // are NOBITS but start with `.dram` (arduino-esp32 maps print `*fill*` rows
+    // under these names, so they must not claim a flash load image).
+    ['.dram0.bss', 'bss'],
+    ['.dram0.noinit', 'bss'],
     ['.dram', 'data'],
     ['.rtc.data', 'data'],
     ['.rtc.force_slow', 'data'],

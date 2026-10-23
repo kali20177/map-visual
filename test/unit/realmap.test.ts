@@ -185,3 +185,101 @@ describe('real-world map golden (zephyr nucleo_f103rb clang+lld)', () => {
         expect(rt!.isSystem).toBe(true);
     });
 });
+
+/**
+ * arduino-esp32（arduino-cli 1.5.1 + esp32:esp32 3.3.12）与 PlatformIO
+ * （espressif32 8.0.0，同为 Arduino core 3.3.12）的真实构建产物。
+ *
+ * 真值口径与 IDF 样本一致：
+ *  - flash = 应用镜像 `.bin` 减去镜像头（24 B 头 + 6×8 B 段头 + 校验/对齐）；
+ *    解析值略低于 `.bin` 的部分来自 `.rtc_reserved`（NOLOAD、不进镜像）与
+ *    `.noinit`（只记 RAM），属于已知 ≤40 B 的口径差。
+ *  - ram = DRAM（`.data`+`.bss`+`.noinit`）+ IRAM（`.iram0.text/.vectors`）
+ *    + RTC（`.rtc.force_slow/.rtc_reserved`），与 `esp32-*-elf-readelf -S`
+ *    的 ALLOC 段按 VMA 窗口求和一致。
+ *
+ * 这批语料驱动了两处分类修复（docs/DESIGN.md §13 条目 25）：
+ *  ① `.DebugExceptionVector.text`（Xtensa vectors.S 的代码桩）被 `.debug`
+ *    前缀误判成 meta，IRAM 少 6 B；
+ *  ② `*fill*` 行用输出段名做分类，`.dram0.bss` 命中 `.dram` → data、把
+ *    BSS 填充记成 flash+ram（S3 样本 238 B / C3 样本 206 B）。
+ */
+describe('real-world map golden (arduino-esp32 / ESP32-S3, arduino-cli 3.3.12)', () => {
+    it('matches the ELF/bin truth', async () => {
+        const doc = await parseFixture('real/arduino-esp32-location-s3.map');
+        expect(doc.format).toBe('gnu-ld');
+        expect(doc.warnings).toEqual([]);
+        // .bin 1,237,904 − 96（镜像头 116 − rtc_reserved 24 + 对齐 4）
+        expect(doc.totals.flash).toBe(1237808);
+        // DRAM 48,652（arduino-cli "Global variables use"）+ IRAM 95,387 + RTC 72
+        expect(doc.totals.ram).toBe(144111);
+        const roles = Object.fromEntries(doc.regions.map((r) => [r.name, r.role]));
+        expect(roles).toMatchObject({
+            iram0_0_seg: 'ram',
+            iram0_2_seg: 'flash',
+            dram0_0_seg: 'ram',
+            drom0_0_seg: 'flash',
+            rtc_reserved_seg: 'ram',
+            rtc_slow_seg: 'ram',
+            extern_ram_seg: 'ram',
+        });
+        const used = Object.fromEntries(doc.totals.regions.map((r) => [r.region.name, r.used]));
+        expect(used).toMatchObject({
+            iram0_0_seg: 95387,
+            dram0_0_seg: 48652, // 与 arduino-cli 报的 "Global variables use" 逐字节相等
+            rtc_reserved_seg: 40,
+            rtc_slow_seg: 32,
+        });
+    });
+
+    it('keeps the Xtensa DebugExceptionVector in IRAM code', async () => {
+        const doc = await parseFixture('real/arduino-esp32-location-s3.map');
+        const dbg = doc.symbols.find((s) => s.section === '.DebugExceptionVector.text');
+        expect(dbg).toBeDefined();
+        expect(dbg!.kind).toBe('code');
+        expect(dbg!.storage).toEqual(['flash', 'ram']);
+        expect(dbg!.size).toBe(6);
+    });
+
+    it('treats .dram0.bss fills as RAM-only', async () => {
+        const doc = await parseFixture('real/arduino-esp32-location-s3.map');
+        const fills = doc.symbols.filter((s) => s.isFill && s.outSection === '.dram0.bss');
+        expect(fills.length).toBeGreaterThan(0);
+        expect(fills.every((s) => s.storage.join() === 'ram')).toBe(true);
+    });
+});
+
+describe('real-world map golden (PlatformIO espressif32 8.0.0 / ESP32-C3)', () => {
+    it('matches the ELF/bin truth', async () => {
+        const doc = await parseFixture('real/platformio-c3-adblock.map');
+        expect(doc.format).toBe('gnu-ld');
+        expect(doc.warnings).toEqual([]);
+        // .bin 1,497,392 − 97（镜像头 116 − rtc_reserved 24 + 填充 5）
+        expect(doc.totals.flash).toBe(1497295);
+        // DRAM 78,176（PlatformIO "RAM used"）+ IRAM 65,284 + RTC 72
+        expect(doc.totals.ram).toBe(143532);
+        const used = Object.fromEntries(doc.totals.regions.map((r) => [r.region.name, r.used]));
+        expect(used).toMatchObject({
+            iram0_0_seg: 65284,
+            dram0_0_seg: 78176,
+            iram0_2_seg: 1144006, // IROM 段 0x1174c8 少 2 B 段间对齐
+            drom0_0_seg: 273192,
+        });
+        const roles = Object.fromEntries(doc.regions.map((r) => [r.name, r.role]));
+        expect(roles).toMatchObject({
+            iram0_0_seg: 'ram',
+            iram0_2_seg: 'flash',
+            dram0_0_seg: 'ram',
+            drom0_0_seg: 'flash',
+            rtc_iram_seg: 'ram',
+            rtc_reserved_seg: 'ram',
+        });
+    });
+
+    it('keeps .dram0.bss fills out of flash', async () => {
+        const doc = await parseFixture('real/platformio-c3-adblock.map');
+        const fills = doc.symbols.filter((s) => s.isFill && s.outSection === '.dram0.bss');
+        expect(fills.length).toBeGreaterThan(0);
+        expect(fills.every((s) => s.storage.join() === 'ram')).toBe(true);
+    });
+});

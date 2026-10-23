@@ -238,6 +238,13 @@ interface SymbolQuery {
 
 function filterSymbols(doc: MapDocument, q: SymbolQuery): SymbolRecord[] {
     const rows = doc.symbols.filter((s) => {
+        // Placeholder address windows (`*dummy`/`*noload` output sections)
+        // hold no image bytes and are already excluded from totals/treemap —
+        // listing them would answer "who is biggest?" with a 1.4 MB NOBITS
+        // reservation that flash accounting never counted.
+        if (s.isReserve) {
+            return false;
+        }
         if (!q.kinds.has(s.kind)) {
             return false;
         }
