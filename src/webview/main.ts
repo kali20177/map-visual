@@ -539,20 +539,24 @@ function renderSummary(): void {
     const metaRow = t.kindTotals.meta > 0 ? kindRow('meta', tr('non-alloc')) : '';
 
     const top = doc.symbols
+        .map((sym, index) => ({ sym, index }))
         .filter(
-            (s) =>
-                s.status === 'kept' &&
-                !s.isFill &&
-                !s.isReserve &&
-                s.size > 0 &&
-                state.ui.kinds[s.kind],
+            ({ sym }) =>
+                sym.status === 'kept' &&
+                !sym.isFill &&
+                !sym.isReserve &&
+                sym.size > 0 &&
+                state.ui.kinds[sym.kind],
         )
-        .sort((a, b) => b.size - a.size)
+        .sort((a, b) => b.sym.size - a.sym.size)
         .slice(0, 10);
     const topHtml = top
-        .map((s) => {
-            const label = state.ui.demangle ? (s.demangled ?? s.name) : s.name;
-            return `<div class="mv-top-row" data-filter="${escapeAttr(label)}"><span class="mv-top-name">${escapeHtml(label)}</span><span class="mv-top-size">${formatBytes(s.size)}</span></div>`;
+        .map(({ sym, index }) => {
+            const label = state.ui.demangle ? (sym.demangled ?? sym.name) : sym.name;
+            // A shortcut to the row itself — `locateTopSymbol` scrolls/selects
+            // it without touching the search box (the old data-filter made the
+            // summary a second, sticky filter).
+            return `<div class="mv-top-row" data-sym="${index}" role="button" tabindex="0" title="${escapeAttr(tr('Locate in the list'))}"><span class="mv-top-name">${escapeHtml(label)}</span><span class="mv-top-size">${formatBytes(sym.size)}</span></div>`;
         })
         .join('');
 
@@ -834,6 +838,50 @@ function setFilter(text: string): void {
     state.ui.filterText = text;
     syncSearchChrome();
     scheduleRender();
+}
+
+/**
+ * Reveal a "Top symbols" entry in the list: expand its group when collapsed,
+ * scroll it into view and select it. Filters stay untouched — the summary is
+ * a shortcut to the row, not a second search box (clicking used to fill the
+ * query and hide every other symbol, so going back meant clearing it by hand).
+ */
+function locateTopSymbol(docIndex: number): void {
+    const doc = state.doc;
+    const sym = doc?.symbols[docIndex];
+    if (!doc || !sym) {
+        return;
+    }
+    if (state.view === 'treemap') {
+        state.view = 'list';
+        state.treemapGroupKey = null;
+        state.pendingScroll = null;
+        viewEl.classList.toggle('on', false);
+        renderAll();
+    }
+    const items = buildView(doc, state.ui);
+    const group = items.find(
+        (item): item is GroupView => item.kind === 'group' && item.rows.some((r) => r.sym === sym),
+    );
+    const plainRow = items.some((item) => item.kind === 'row' && item.row.sym === sym);
+    if (!group && !plainRow) {
+        toast(tr('Hidden by the current filters'));
+        return;
+    }
+    if (group && state.collapsed.has(group.key)) {
+        state.collapsed.delete(group.key);
+        renderRows();
+    }
+    const index = visible.findIndex((entry) => entry.row?.sym === sym);
+    if (index < 0) {
+        toast(tr('Hidden by the current filters'));
+        return;
+    }
+    state.selected = new Set([index]);
+    state.anchor = index;
+    focusRow(index);
+    listScrollTop = tbodyEl.scrollTop;
+    persist();
 }
 
 /** Append a term to the running query (what "Exclude object" needs). */
@@ -1660,10 +1708,22 @@ summaryEl.addEventListener('click', (ev) => {
         renderAll();
         return;
     }
-    const top = (ev.target as HTMLElement).closest('[data-filter]') as HTMLElement | null;
+    const top = (ev.target as HTMLElement).closest('[data-sym]') as HTMLElement | null;
     if (top) {
-        setFilter(quoteTerm(top.dataset.filter!));
+        locateTopSymbol(parseInt(top.dataset.sym!, 10));
     }
+});
+
+summaryEl.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') {
+        return;
+    }
+    const top = (ev.target as HTMLElement).closest('.mv-top-row') as HTMLElement | null;
+    if (!top) {
+        return;
+    }
+    ev.preventDefault();
+    locateTopSymbol(parseInt(top.dataset.sym!, 10));
 });
 
 function syncToggles(): void {

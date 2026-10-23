@@ -473,6 +473,11 @@ body.mv-side-dragging {
     background: var(--vscode-list-hoverBackground);
 }
 
+.mv-top-row:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
 .mv-top-name {
     white-space: nowrap;
     overflow: hidden;
