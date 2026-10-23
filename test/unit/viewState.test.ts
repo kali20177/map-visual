@@ -38,6 +38,7 @@ const view = (over: Partial<PersistedViewState> = {}): PersistedViewState => ({
     view: 'list',
     treemapGroupKey: null,
     cols: [6.8, 33, 5.6, 23.5, 23.4, 7.7],
+    summaryWidth: 250,
     scrollTop: 480,
     selected: [3, 4],
     symbolCount: 172,

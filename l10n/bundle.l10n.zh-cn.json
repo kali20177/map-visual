@@ -68,6 +68,7 @@
   "Address (VMA)": "地址（VMA）",
   "Address (LMA)": "地址（LMA）",
   "Drag to resize the column": "拖动调整列宽",
+  "Resize the summary panel (arrow keys, double-click to reset)": "调整摘要面板宽度（方向键微调，双击恢复默认）",
   "no matches": "无匹配",
   "1 match": "1 个匹配",
   "{0} matches": "{0} 个匹配",

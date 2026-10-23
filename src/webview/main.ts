@@ -4,7 +4,11 @@ import type { HostToWebview, WebviewToHost } from '../protocol';
 import { tr } from './i18n';
 import {
     DEFAULT_UI_STATE,
+    SUMMARY_DEFAULT_PX,
+    SUMMARY_MIN_PX,
+    SUMMARY_TABLE_MIN_PX,
     buildView,
+    clampSummaryWidth,
     displayAddr,
     filterAndSort,
     flattenItems,
@@ -68,6 +72,8 @@ interface AppState {
     anchor: number | null;
     /** column widths in fr units, one per table column */
     cols: number[];
+    /** summary-panel width in px, persisted per map file */
+    summaryWidth: number;
     /**
      * Scroll offset / row selection come back from a stored blob, but only mean
      * something once the matching document is on screen — they are consumed by
@@ -87,6 +93,7 @@ interface Restore {
     collapsed: string[];
     view: 'list' | 'treemap';
     cols: number[];
+    summaryWidth: number;
     treemapGroupKey: string | null;
     scrollTop: number;
     selected: number[];
@@ -143,6 +150,7 @@ function restoreState(raw: unknown): Restore {
         collapsed: [],
         view: 'list',
         cols: [...DEFAULT_COLS],
+        summaryWidth: SUMMARY_DEFAULT_PX,
         treemapGroupKey: null,
         scrollTop: 0,
         selected: [],
@@ -160,6 +168,10 @@ function restoreState(raw: unknown): Restore {
         collapsed: Array.isArray(p.collapsed) ? p.collapsed.filter((k): k is string => typeof k === 'string') : [],
         view: p.view === 'treemap' ? 'treemap' : 'list',
         cols: restoreCols(p.cols),
+        summaryWidth:
+            typeof p.summaryWidth === 'number' && Number.isFinite(p.summaryWidth) && p.summaryWidth > 0
+                ? p.summaryWidth
+                : SUMMARY_DEFAULT_PX,
         treemapGroupKey: typeof p.treemapGroupKey === 'string' ? p.treemapGroupKey : null,
         scrollTop: typeof p.scrollTop === 'number' && Number.isFinite(p.scrollTop) && p.scrollTop > 0 ? p.scrollTop : 0,
         selected: Array.isArray(p.selected)
@@ -192,6 +204,7 @@ const state: AppState = {
     selected: new Set(),
     anchor: null,
     cols: saved.cols,
+    summaryWidth: saved.summaryWidth,
     docEpoch: 0,
     selectionSignature: null,
     ...pendingRestore(saved),
@@ -235,8 +248,9 @@ root.innerHTML = `
     <button id="mv-split" class="mv-toggle">${escapeHtml(tr('Raw'))}</button>
     <button id="mv-export" class="mv-btn" title="${escapeAttr(tr('Export the filtered rows as CSV'))}">CSV</button>
   </div>
-  <div class="mv-body">
+  <div id="mv-body" class="mv-body">
     <aside id="mv-summary" class="mv-summary"></aside>
+    <div id="mv-side-resizer" class="mv-resizer" role="separator" aria-orientation="vertical" aria-controls="mv-summary" aria-label="${escapeAttr(tr('Resize the summary panel (arrow keys, double-click to reset)'))}" title="${escapeAttr(tr('Resize the summary panel (arrow keys, double-click to reset)'))}" tabindex="0"></div>
     <div class="mv-tablewrap">
       <div class="mv-thead" id="mv-thead"></div>
       <div class="mv-tbody" id="mv-tbody"><div class="mv-spacer" id="mv-spacer"><div class="mv-rows" id="mv-rows"></div></div></div>
@@ -267,6 +281,8 @@ const viewEl = $('mv-view');
 const splitEl = $('mv-split');
 const exportEl = $('mv-export');
 const summaryEl = $('mv-summary');
+const bodyEl = $('mv-body');
+const resizerEl = $('mv-side-resizer');
 const theadEl = $('mv-thead');
 const tbodyEl = $('mv-tbody');
 const spacerEl = $('mv-spacer');
@@ -330,6 +346,7 @@ function persist(): void {
         view: state.view,
         treemapGroupKey: state.treemapGroupKey,
         cols: state.cols,
+        summaryWidth: state.summaryWidth,
         scrollTop: listScrollTop,
         selected: [...state.selected],
         symbolCount: state.doc?.symbols.length ?? 0,
@@ -346,6 +363,24 @@ function persist(): void {
 function applyCols(): void {
     const tracks = state.cols.map((c, i) => `minmax(${COL_MIN_PX[i]}px, ${c.toFixed(2)}fr)`);
     document.documentElement.style.setProperty('--mv-cols', tracks.join(' '));
+}
+
+/**
+ * Apply the per-file summary width. Reopening a file in a narrower panel must
+ * not leave the table squeezed below its column floors, so clamp against the
+ * live body width first; the separator advertises the same range.
+ */
+function applySummaryWidth(): void {
+    if (bodyEl.clientWidth > 0) {
+        state.summaryWidth = clampSummaryWidth(state.summaryWidth, bodyEl.clientWidth);
+    }
+    document.documentElement.style.setProperty('--mv-side-w', `${state.summaryWidth}px`);
+    resizerEl.setAttribute('aria-valuenow', String(state.summaryWidth));
+    resizerEl.setAttribute('aria-valuemin', String(SUMMARY_MIN_PX));
+    resizerEl.setAttribute(
+        'aria-valuemax',
+        String(Math.max(SUMMARY_MIN_PX, bodyEl.clientWidth - SUMMARY_TABLE_MIN_PX)),
+    );
 }
 
 /** Discard dragged widths and go back to the shipped layout. */
@@ -644,9 +679,11 @@ function renderFooter(): void {
     }
     const t = doc.totals;
     // the denominator must cover whatever the numerator can show; reserve
-    // windows are never shown (they are not symbols), so they stay out
+    // windows are never shown (they are not symbols), so they stay out.
+    // `?? 0` keeps hand-written harness documents (pre-reserveCount shapes)
+    // from turning the counter into NaN.
     const total =
-        (state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount) - t.reserveCount;
+        (state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount) - (t.reserveCount ?? 0);
     const parts = [
         tr('{0} / {1} symbols', shownRows, total),
         tr('Flash {0}', formatBytes(t.flash)),
@@ -893,6 +930,7 @@ function syncControls(): void {
     syncToggles();
     updateClickHint();
     applyCols();
+    applySummaryWidth();
 }
 
 /** Apply a blob the host replayed (workspaceState) on top of the current view. */
@@ -988,6 +1026,7 @@ interface ColDrag {
 }
 
 let colDrag: ColDrag | null = null;
+let sideDrag: { startX: number; startWidth: number } | null = null;
 
 /** Pixels per fr unit in the current header layout. */
 function colDragUnit(): number {
@@ -1050,6 +1089,65 @@ theadEl.addEventListener('mousedown', (ev) => {
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up, { once: true });
+});
+
+// Summary/table separator: drag to trade width with the table, arrow keys for
+// keyboard users, double-click (or Enter) to restore the shipped 250px. The
+// width is part of the per-file view blob, so reopening the map keeps it.
+resizerEl.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) {
+        return;
+    }
+    ev.preventDefault();
+    sideDrag = { startX: ev.clientX, startWidth: state.summaryWidth };
+    document.body.classList.add('mv-side-dragging');
+    const move = (e: MouseEvent): void => {
+        if (!sideDrag) {
+            return;
+        }
+        state.summaryWidth = clampSummaryWidth(sideDrag.startWidth + e.clientX - sideDrag.startX, bodyEl.clientWidth);
+        applySummaryWidth();
+    };
+    const up = (): void => {
+        document.removeEventListener('mousemove', move);
+        document.body.classList.remove('mv-side-dragging');
+        sideDrag = null;
+        applySummaryWidth();
+        persist();
+        scheduleRender(); // table width changed — repaint for the new viewport
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up, { once: true });
+});
+
+resizerEl.addEventListener('keydown', (ev) => {
+    const step = ev.shiftKey ? 48 : 16;
+    let next = state.summaryWidth;
+    if (ev.key === 'ArrowLeft') {
+        next -= step;
+    } else if (ev.key === 'ArrowRight') {
+        next += step;
+    } else if (ev.key === 'Home') {
+        next = SUMMARY_MIN_PX;
+    } else if (ev.key === 'End') {
+        next = bodyEl.clientWidth - SUMMARY_TABLE_MIN_PX;
+    } else if (ev.key === 'Enter') {
+        next = SUMMARY_DEFAULT_PX;
+    } else {
+        return;
+    }
+    ev.preventDefault();
+    state.summaryWidth = clampSummaryWidth(next, bodyEl.clientWidth);
+    applySummaryWidth();
+    persist();
+    scheduleRender();
+});
+
+resizerEl.addEventListener('dblclick', () => {
+    state.summaryWidth = SUMMARY_DEFAULT_PX;
+    applySummaryWidth();
+    persist();
+    scheduleRender();
 });
 
 theadEl.addEventListener('click', (ev) => {
@@ -1544,7 +1642,14 @@ tbodyEl.addEventListener('keydown', (ev) => {
 });
 
 // re-apply the current view when the panel is resized without any interaction
-const resizeObserver = new ResizeObserver(() => scheduleRender());
+const resizeObserver = new ResizeObserver(() => {
+    applySummaryWidth();
+    // dragging the separator already repaints on release; rendering on every
+    // mousemove would rebuild the virtual window for nothing
+    if (!sideDrag) {
+        scheduleRender();
+    }
+});
 resizeObserver.observe(tbodyEl);
 
 summaryEl.addEventListener('click', (ev) => {

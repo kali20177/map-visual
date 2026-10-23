@@ -13,6 +13,25 @@ import { tr } from './i18n';
 
 export type { GroupBy, SortKey, UiState } from '../types';
 
+/** Summary panel geometry in px; the table keeps enough room for its column floors. */
+export const SUMMARY_DEFAULT_PX = 250;
+export const SUMMARY_MIN_PX = 180;
+export const SUMMARY_TABLE_MIN_PX = 380;
+
+/**
+ * Clamp a stored/dragged summary width to the current panel. A zero width
+ * means layout has not run yet — keep the stored value as-is instead of
+ * collapsing the panel before the first paint.
+ */
+export function clampSummaryWidth(width: number, bodyWidth: number): number {
+    if (!Number.isFinite(width)) {
+        return SUMMARY_DEFAULT_PX;
+    }
+    const max =
+        bodyWidth > 0 ? Math.max(SUMMARY_MIN_PX, bodyWidth - SUMMARY_TABLE_MIN_PX) : Number.POSITIVE_INFINITY;
+    return Math.round(Math.min(Math.max(width, SUMMARY_MIN_PX), max));
+}
+
 export const DEFAULT_UI_STATE: UiState = {
     sortKey: 'size',
     sortDir: 'desc',

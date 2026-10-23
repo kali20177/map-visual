@@ -259,12 +259,47 @@ body {
 }
 
 .mv-summary {
-    width: 250px;
+    /* width is user-adjustable (dragged separator) and persisted per file */
+    width: var(--mv-side-w, 250px);
     flex: none;
     overflow-y: auto;
     padding: 12px;
-    border-right: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
     background: var(--vscode-sideBar-background);
+}
+
+/* The separator owns the vertical rule: a 6px hit target with a 1px line,
+   brightened while hovered, focused or dragged. */
+.mv-resizer {
+    flex: 0 0 6px;
+    position: relative;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.mv-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 1px;
+    background: var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+}
+
+.mv-resizer:hover::after,
+.mv-resizer:focus-visible::after,
+body.mv-side-dragging .mv-resizer::after {
+    width: 2px;
+    background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder, #007acc));
+}
+
+.mv-resizer:focus-visible {
+    outline: none;
+}
+
+body.mv-side-dragging {
+    cursor: col-resize;
+    user-select: none;
 }
 
 .mv-tablewrap {

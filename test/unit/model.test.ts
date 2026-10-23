@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     DEFAULT_UI_STATE,
+    SUMMARY_DEFAULT_PX,
+    SUMMARY_MIN_PX,
+    SUMMARY_TABLE_MIN_PX,
     buildView,
+    clampSummaryWidth,
     displayAddr,
     filterAndSort,
     flattenItems,
@@ -277,5 +281,19 @@ describe('formatting + csv', () => {
             sym({ name: 'runtime-low', addr: 0x10000000, lma: 0x09000000 }),
         ]), ui({ sortKey: 'addr', sortDir: 'asc', showLma: true }));
         expect(byLma.map((r) => r.sym.name)).toEqual(['runtime-high', 'runtime-low']);
+    });
+});
+
+describe('summary panel width', () => {
+    it('keeps the stored width, clamps to the panel and leaves the table a floor', () => {
+        expect(clampSummaryWidth(SUMMARY_DEFAULT_PX, 1200)).toBe(250);
+        expect(clampSummaryWidth(10, 1200)).toBe(SUMMARY_MIN_PX);
+        expect(clampSummaryWidth(5000, 1200)).toBe(1200 - SUMMARY_TABLE_MIN_PX);
+        expect(clampSummaryWidth(Number.NaN, 1200)).toBe(SUMMARY_DEFAULT_PX);
+        // layout has not run yet (hidden panel): keep the stored value instead
+        // of collapsing it to the floor before the first paint
+        expect(clampSummaryWidth(300, 0)).toBe(300);
+        // narrower than the table floor: min wins, the table clips as before
+        expect(clampSummaryWidth(400, 500)).toBe(SUMMARY_MIN_PX);
     });
 });

@@ -228,6 +228,8 @@ export interface PersistedViewState {
      * schema: v1 stored widths for the pre-reorder column sequence.
      */
     cols: number[];
+    /** Summary-panel width in px (the table keeps its column floors). */
+    summaryWidth: number;
     scrollTop: number;
     /** Indices into the rendered row list (only meaningful for `symbolCount`). */
     selected: number[];
