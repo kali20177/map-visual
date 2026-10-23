@@ -78,6 +78,11 @@ describe('real-world map golden (zephyr nucleo_f103rb)', () => {
         const doc = await parseFixture('real/zephyr-nucleo-f103rb.map');
         const roles = Object.fromEntries(doc.regions.map((r) => [r.name, r.role]));
         expect(roles).toEqual({ FLASH: 'flash', RAM: 'ram', DEVNULL_ROM: 'other', SRAM0: 'ram', IDT_LIST: 'other' });
+        // RAM 与 SRAM0 是同址同角色的别名，但没有 IROM/DROM 命名可供分流：
+        // 两处都必须保留原用量（折叠别名是 Memory layout 的视图语义，不能
+        // 让 summary 的 region used 凭空归零）。
+        const used = Object.fromEntries(doc.totals.regions.map((r) => [r.region.name, r.used]));
+        expect(used).toEqual({ FLASH: 77256, RAM: 16054, DEVNULL_ROM: 0, SRAM0: 16054, IDT_LIST: 0 });
         // Zephyr parks log strings in DEVNULL_ROM — not part of the image
         const logRow = doc.symbols.find((s) => s.status === 'kept' && s.section.startsWith('._log_strings.'));
         expect(logRow).toBeDefined();

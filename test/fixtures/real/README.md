@@ -91,3 +91,8 @@
   不进应用镜像（esptool 段表无它），但解析器按"RAM 内 data 无 LMA ⇒ 有
   载像"的既有规则记 flash+ram；`.noinit` 反向只记 RAM。两处相加即
   flash 与 `.bin` 的差额，均不影响 RAM 的逐字节对账。
+
+**体积**：两份新增 map 合计约 27 MB（16 MB + 11 MB），是当前最大的
+fixture；换来的是 arduino-cli / PlatformIO 两条真实构建链的形态覆盖。
+若后续克隆体积成为问题，可迁移到 Git LFS，但不要截断——截断会丢掉
+Discarded input sections 与 Memory Configuration 的真实规模。

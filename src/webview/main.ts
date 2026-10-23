@@ -643,8 +643,10 @@ function renderFooter(): void {
         return;
     }
     const t = doc.totals;
-    // the denominator must cover whatever the numerator can show
-    const total = state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount;
+    // the denominator must cover whatever the numerator can show; reserve
+    // windows are never shown (they are not symbols), so they stay out
+    const total =
+        (state.ui.showDiscarded ? t.keptCount + t.discardedCount : t.keptCount) - t.reserveCount;
     const parts = [
         tr('{0} / {1} symbols', shownRows, total),
         tr('Flash {0}', formatBytes(t.flash)),

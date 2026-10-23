@@ -30,7 +30,7 @@
   "fill outside any output section — attributed to possibly stale header \"{0}\"": "填充落在所有输出段之外 —— 归入可能已失效的段头 \"{0}\"",
   "fill outside any output section (no section header seen)": "填充落在所有输出段之外（没有看到段头）",
   "tiling search failed in {0} output section(s) — kept all candidate lines (possible double count)": "{0} 个输出段的平铺搜索失败 —— 保留了全部候选行（可能重复计数）",
-  "tiling search failed in {0} output section(s) — kept all candidate lines (possible double count); visit budget exhausted in {1} of them": "{0} 个输出段的平铺搜索失败 —— 保留了全部候选行（可能重复计数）；其中 {1} 个耗尽了访问预算",
+  "tiling search failed in {0} output section(s) — kept all candidate lines (possible double count); backtrack budget exhausted in {1} of them": "{0} 个输出段的平铺搜索失败 —— 保留了全部候选行（可能重复计数）；其中 {1} 个耗尽了回溯预算",
   "output extent unknown for {0} output section(s) — kept all candidate lines without tiling (possible double count)": "{0} 个输出段的范围未知 —— 未做平铺，保留了全部候选行（可能重复计数）",
   "format override \"{0}\" yielded no rows — the map may not be in this format": "强制格式 \"{0}\" 没有解析出任何行 —— 该 map 可能不是这种格式",
   "no rows parsed — the map may be truncated or its memory map content is missing": "没有解析出任何行 —— map 可能被截断，或缺少内存布局内容",

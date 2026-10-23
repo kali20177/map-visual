@@ -509,19 +509,18 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
             lines.push(` .mid${i}         0x00001100        0x80 a.o`);
         }
         const { symbols } = parseGnuLd(lines.join('\n'), w);
-        // no chain tiles 0x200 with 0x100 + 0x80 — the search exhausts its
-        // visit budget and falls back to keeping every unit, visibly.
+        // 没有任何组合能铺满 0x200（0x100 + 0x80 不够）——搜索耗尽回溯
+        // 预算，回退为保留全部候选行，并给出可见告警。
         expect(symbols).toHaveLength(320);
         expect(w.list()).toHaveLength(1);
         expect(w.list()[0]!.message).toContain('budget');
     });
 
     it('tiles a very deep section without recursion or a placement budget', () => {
-        // ESP-IDF `.flash.text` shape: a single output section with 10⁴–10⁵
-        // contributions. The old recursive search died at V8's ~10k-frame
-        // stack and counted every placement against a 20k visit budget, so a
-        // deep-but-unambiguous section fell back to keep-all (with a warning)
-        // or overflowed outright. The budget now counts backtracks only.
+        // ESP-IDF `.flash.text` 形态：单个输出段有 10⁴–10⁵ 个贡献。旧的递归
+        // 搜索会在 V8 约 1 万帧处栈溢出，且每次放置都计入 2 万次访问预算，
+        // 干净但很深的段也会回退 keep-all（带告警）或直接溢出；现在预算只
+        // 统计回溯次数。
         const w = new Warnings();
         const N = 30000;
         const start = 0x1000;
@@ -539,13 +538,11 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
     });
 
     it('backtracks to the choice point when a nested forced chain dead-ends', () => {
-        // Two contributions at 0x0 (stale LTO / relax re-print) + a forced
-        // chain behind the wrong one. Only `a2 + e` tiles 0x10: trying `a1`
-        // reaches 0x4, where the lone `b` (2 B) leads into a 2 B hole. The
-        // iterative search pushes a frame only for same-VMA siblings, so the
-        // frame sits two units behind the path tip — backtracking has to
-        // truncate the whole path, not pop one unit (which kept `a1` and
-        // emitted a1 + a2 + e = 0x14 with no warning).
+        // 0x0 处两个贡献（LTO 过期重印）+ 错误分支后面跟着强制链。只有
+        // `a2 + e` 能铺满 0x10：选 `a1` 走到 0x4 时，唯一的 `b`（2 B）
+        // 会留下 2 B 空洞。迭代搜索只在同址多候选处压帧，帧因此位于路径
+        // 末端之前两步——回溯必须把整条路径截断到该深度，而不是弹一个
+        // 单元（旧行为会保留 `a1`，铺出 a1 + a2 + e = 0x14 且零告警）。
         const w = new Warnings();
         const { symbols } = parseGnuLd(
             [
@@ -565,9 +562,9 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
     });
 
     it('ignores the --cref cross-reference table after the memory map', () => {
-        // `-Wl,--cref` (xiaozhi-esp32) appends a symbol→file table; long file
-        // paths wrap onto indented lines without a section/address. They must
-        // not surface as unrecognizedLine noise or pollute the row list.
+        // `-Wl,--cref`（xiaozhi-esp32）会在 map 末尾追加 symbol→file 表；
+        // 长路径换行成没有段名/地址的缩进行，不能报成 unrecognizedLine
+        // 噪声，也不能污染行列表。
         const w = new Warnings();
         const { symbols } = parseGnuLd(
             [

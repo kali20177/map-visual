@@ -89,7 +89,7 @@ describe('region role assignment', () => {
             file: 't',
             regions,
             symbols,
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as unknown as MapDocument;
         const totals = computeStorageAndTotals(doc);
@@ -115,7 +115,7 @@ describe('region role assignment', () => {
             file: 't',
             regions,
             symbols,
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as unknown as MapDocument;
         const totals = computeStorageAndTotals(doc);
@@ -152,7 +152,7 @@ describe('region role assignment', () => {
             file: 't',
             regions,
             symbols,
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as unknown as MapDocument;
         const totals = computeStorageAndTotals(doc);
@@ -160,6 +160,16 @@ describe('region role assignment', () => {
         expect(totals.flash).toBe(0xd0);
         // ram = IRAM 代码 0x50 + sram data 0x10 + bss 0x20 + RTC 代码 0x8 + RTC data 0x8
         expect(totals.ram).toBe(0x90);
+        // 同址同角色的 flash 别名不能把整个窗口各记一遍：code 归 irom_seg、
+        // rodata 归 drom_seg；sram_seg 是 IRAM+DRAM 合一区，RTC 两块各计各的。
+        const used = Object.fromEntries(totals.regions.map((r) => [r.region.name, r.used]));
+        expect(used).toEqual({
+            irom_seg: 0x40,
+            drom_seg: 0x20,
+            sram_seg: 0x80,
+            lp_ram_seg: 0x8,
+            lp_reserved_seg: 0x8,
+        });
     });
 });
 
@@ -233,7 +243,7 @@ describe('storage + totals', () => {
                 sym({ name: 'b', kind: 'bss', size: 4 }),
                 sym({ name: 'x', kind: 'meta', size: 3 }),
             ],
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as MapDocument;
         const totals = computeStorageAndTotals(doc);
@@ -254,7 +264,7 @@ describe('storage + totals', () => {
                 sym({ name: 'f', kind: 'code', size: 10 }),
                 sym({ name: 'g', kind: 'code', size: 99, status: 'discarded' }),
             ],
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as MapDocument;
         const totals = computeStorageAndTotals(doc);
@@ -274,7 +284,7 @@ describe('storage + totals', () => {
                 sym({ name: 'd', kind: 'data', addr: 0x20000000, lma: 0x08000100, size: 8 }),
                 sym({ name: 'b', kind: 'bss', addr: 0x20000008, size: 4 }),
             ],
-            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
             warnings: [],
         } as unknown as MapDocument;
         assignRegionRoles(regions, doc.symbols);

@@ -134,6 +134,7 @@ export async function parseMapText(
             keptCount: 0,
             discardedCount: 0,
             fillTotal: 0,
+            reserveCount: 0,
             kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 },
             regions: [],
         },

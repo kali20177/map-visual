@@ -57,7 +57,9 @@ export interface SymbolRecord {
      * `.dram0.heap_start` / `.iram0.end` (ESP-IDF's `.ext_ram.dummy`,
      * `.flash_rodata_dummy`, `.dram0.dummy`, `.flash.rodata_noload`). They
      * tile an address window that the load image does not contain, so they
-     * claim no flash/ram and stay out of `kindTotals` and the treemap.
+     * claim no flash/ram and stay out of `kindTotals`, the treemap, the row
+     * lists / Top 10 and `symbols` / `diff` output. `MapTotals.reserveCount`
+     * keeps the parsed-row accounting separate from the visible rows.
      */
     isReserve: boolean;
     /** Name was reconstructed from a mangled section name (`.text._ZN...`) rather than a symbol line. */
@@ -115,7 +117,7 @@ export const WARNING_TEMPLATES: Record<WarningCode, string> = {
     fillOutsideOutputSection: 'fill outside any output section (no section header seen)',
     tilingSearchFailed: 'tiling search failed in {0} output section(s) — kept all candidate lines (possible double count)',
     tilingSearchFailedWithBudget:
-        'tiling search failed in {0} output section(s) — kept all candidate lines (possible double count); visit budget exhausted in {1} of them',
+        'tiling search failed in {0} output section(s) — kept all candidate lines (possible double count); backtrack budget exhausted in {1} of them',
     outputExtentUnknown: 'output extent unknown for {0} output section(s) — kept all candidate lines without tiling (possible double count)',
     formatOverrideNoRows: 'format override "{0}" yielded no rows — the map may not be in this format',
     noRowsParsed: 'no rows parsed — the map may be truncated or its memory map content is missing',
@@ -139,9 +141,16 @@ export interface ParseWarning {
 export interface MapTotals {
     flash: number;
     ram: number;
+    /**
+     * Kept rows as parsed, including placeholder windows. `count` in the CLI
+     * and the webview row lists exclude them; subtract `reserveCount` to get
+     * the row count those surfaces can show.
+     */
     keptCount: number;
     discardedCount: number;
     fillTotal: number;
+    /** Kept rows whose output section only reserves address space (see `SymbolRecord.isReserve`). */
+    reserveCount: number;
     kindTotals: Record<SymbolKind, number>;
     /** Per-region used size, derived from kept symbols + fills falling into the region. */
     regions: { region: MemoryRegion; used: number }[];

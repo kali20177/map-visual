@@ -101,7 +101,7 @@ function render(): void {
     summaryEl.innerHTML =
         cell(tr('Flash'), tA.flash, tB.flash) +
         cell(tr('RAM'), tA.ram, tB.ram) +
-        `<div class="mv-dcell"><span class="mv-dlabel">${escapeHtml(tr('Symbols'))}</span> ${tA.keptCount} → ${tB.keptCount} <span class="mv-delta">${escapeHtml(tr('{0} differ', changed))}</span></div>`;
+        `<div class="mv-dcell"><span class="mv-dlabel">${escapeHtml(tr('Symbols'))}</span> ${tA.keptCount - tA.reserveCount} → ${tB.keptCount - tB.reserveCount} <span class="mv-delta">${escapeHtml(tr('{0} differ', changed))}</span></div>`;
 
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
     renderWindow();

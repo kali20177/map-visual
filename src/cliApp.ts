@@ -202,6 +202,7 @@ function flattenTotals(t: MapTotals): object {
         keptCount: t.keptCount,
         discardedCount: t.discardedCount,
         fillTotal: t.fillTotal,
+        reserveCount: t.reserveCount,
         kindTotals: t.kindTotals,
         regions: t.regions.map(({ region, used }) => ({
             name: region.name,
@@ -238,10 +239,9 @@ interface SymbolQuery {
 
 function filterSymbols(doc: MapDocument, q: SymbolQuery): SymbolRecord[] {
     const rows = doc.symbols.filter((s) => {
-        // Placeholder address windows (`*dummy`/`*noload` output sections)
-        // hold no image bytes and are already excluded from totals/treemap —
-        // listing them would answer "who is biggest?" with a 1.4 MB NOBITS
-        // reservation that flash accounting never counted.
+        // 占位地址窗口（`*dummy`/`*noload` 输出段）不承载镜像字节，已在
+        // totals/treemap 中排除；若仍列出，"谁最大"的答案会是一块 1.4 MB
+        // 的 NOBITS 预留窗口，而 flash 统计从未计入它。
         if (s.isReserve) {
             return false;
         }

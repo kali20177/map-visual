@@ -33,7 +33,7 @@ function doc(file: string, symbols: SymbolRecord[]): MapDocument {
         file,
         regions: [],
         symbols,
-        totals: { flash: 0, ram: 0, keptCount: symbols.length, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+        totals: { flash: 0, ram: 0, keptCount: symbols.length, discardedCount: 0, fillTotal: 0, reserveCount: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
         warnings: [],
     };
 }

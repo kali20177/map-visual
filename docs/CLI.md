@@ -72,7 +72,7 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-
 ```
 
 - `<file>` 均为必选位置参数；`--kind`/`--status` 可重复（OR 语义）；`--section`/`--object`/`--filter` 为正则/子串匹配。
-- `symbols` 默认按 size 降序（AI 的第一问永远是"谁最大"），且默认折叠 `meta`、隐藏 `discarded`（对齐 webview 默认视图），`--kind meta` / `--status discarded` 显式放开。**预留窗口（`isReserve`：`*dummy` / `*noload` 输出段）无条件折叠**——它们是 NOBITS 地址占位、本就不进 flash/ram，列出来会让 IDF map 的"最大符号"变成 1.4 MB 的占位行；`--kind` / `--status` 都不放开它。
+- `symbols` 默认按 size 降序（AI 的第一问永远是"谁最大"），且默认折叠 `meta`、隐藏 `discarded`（对齐 webview 默认视图），`--kind meta` / `--status discarded` 显式放开。**预留窗口（`isReserve`：`*dummy` / `*noload` 输出段，以及 `.iram0.text_end` / `.dram0.heap_start` / `.iram0.end` 这类 NOLOAD 地址尾）无条件折叠**——它们是 NOBITS 地址占位、本就不进 flash/ram，列出来会让 IDF map 的"最大符号"变成 1.4 MB 的占位行；`--kind` / `--status` 都不放开它。
 - `treemap --by section` 按**输出段**（`outSection`，linker script 粒度，如 `.text`、Zephyr 的无点 `text`）分组——GNU ld 的 `section` 列混合输入段名（`.text.foo`）与输出段头两种粒度，直接拿来做顶层键会产出"每输入段一行 + 同名输出段只剩 fill 残渣"的坏视图；无输出段上下文的行（loose fills、discarded 列表）回落 `section`。
 - `summary`/`symbols`/`treemap`/`diff` 成功输出 JSON 到 stdout，四命令均带 `warnings`（diff 为 `A:`/`B:` 前缀合并）；**MapParseError.kind 类错误**（退出码 3–7）在 stderr 输出单行 JSON `{"error":{"kind":"notfound","message":"..."}}`；**usage 错误**（退出码 2）stderr 为人类可读消息 + Usage 帮助（见 §10 偏差 4）。
 
@@ -101,7 +101,7 @@ mapvisual diff     <fileA> <fileB> [--status added|removed|changed|same] [--min-
   "file": "firmware.map", "format": "gnu-ld",
   "totals": {
     "flash": 7648, "ram": 6360,
-    "keptCount": 0, "discardedCount": 0, "fillTotal": 0,
+    "keptCount": 0, "discardedCount": 0, "fillTotal": 0, "reserveCount": 0,
     "kindTotals": { "code": 0, "rodata": 0, "data": 0, "bss": 0, "meta": 0, "pad": 0, "other": 0 },
     "regions": [
       { "name": "FLASH", "role": "flash", "origin": 134217728, "length": 65536, "used": 7648, "usage": 0.117 }
@@ -194,7 +194,7 @@ CLI 属于 worker 树的消费者，必须与 worker 同等约束。按 AGENTS.m
 | symbols 过滤/排序 | `--kind code --top 5` 返回 5 行且 size 降序；默认折叠 meta、隐藏 discarded；预留窗口（`isReserve`）无条件折叠（S3 fixture：kept 23 → 17 行）；`--no-demangle` 时 `demangled===null`；行携带 `outSection` |
 | treemap 属性 | 全量 fixture：Σ 同级 children 的 size 与 count 都等于父级，总量 == kept 非 meta 总量；`--depth 1/2` 截断正确 |
 | treemap 输出段回归 | rb-demo 顶层 `.text` > 5 KB（修复前仅 8 B 的 fill 残渣）、zephyr 顶层节点 < 200（修复前 1188）且 `text` 节点 > 60 KB |
-| loose fill 探针 | 合成 map 两场景（无段头 / LOAD 后 stale header）：回落分支的分组落点与告警（22 份语料零命中该分支，见 §10.14） |
+| loose fill 探针 | 合成 map 两场景（无段头 / LOAD 后 stale header）：回落分支的分组落点与告警（复核当时 22 份语料零命中该分支，见 §10.14） |
 | diff | 4 组代表组合（同目录 + 跨目录）：`deltaFlash === totalsB.flash - totalsA.flash`、计数可从全量行复算、`--top` 截断保序 |
 | `--md` | 四命令均断言表格头与关键数字和 JSON 一致 |
 | flag 矩阵 | `--format` auto/显式匹配/错配补告警、`--object`/`--section` 正则、`--kind` 多值、`--min-size`/`--top 0` 边界、`--sort name/addr`、`--min-delta 0`、`-h/--help`、`--progress` |
@@ -252,7 +252,8 @@ CI（`.github/workflows/ci.yml`）在 Unit tests 后增加一步 CLI smoke：
 11. **dependency-cruiser 改白名单式 `cli-allowlist`**（取代列表式的 cli-no-host/cli-no-webview——列表式曾漏掉 `diffPanel.ts`，lint/coupling 双双放行），`host-must-use-worker` 同步补 diffPanel；两者均经故意违规复测确认触发。
 12. **`mapvisual bogus --version` 返回 0 打印版本**（`--version`/`--help` 在命令校验之前处理）——与 `bogus` → exit 2 不完全一致，登记为已知行为。
 13. **treemap `count` 全层为行数**（复核轮 N1）：首版只把叶子层改为行数，k2 层仍是去重名数（rb-demo `.text` 103 vs 实际 106）；k2 改为对叶子行数求和，`Σ children.count == parent.count` 与 size 不变量一起进全 fixture 属性测试。
-14. **loose fill 回落分支补告警与探针**（复核轮 N4）：22 份语料对该分支零命中（`outSection` 全非 null）；gnuld 对输出段之外的 fill 补告警——有段头名时明示 `possibly stale header`（LOAD/OUTPUT 边界后 `currentSectionHeader` 可能过期，正是混层复发的入口），无段头时提示 `no section header seen`；合成探针两场景进 cli.test.ts。
+14. **loose fill 回落分支补告警与探针**（复核轮 N4）：复核当时 22 份语料对该分支零命中（`outSection` 全非 null）；gnuld 对输出段之外的 fill 补告警——有段头名时明示 `possibly stale header`（LOAD/OUTPUT 边界后 `currentSectionHeader` 可能过期，正是混层复发的入口），无段头时提示 `no section header seen`；合成探针两场景进 cli.test.ts。
 15. **cli-allowlist 的 from 改 `^src/cli` 前缀**（复核轮 N4 附注）：文件枚举对 M7 新增 CLI 文件（stdin/MCP server）不设防，前缀式默认覆盖，`to` 侧 pathNot 同步用前缀；经临时文件故意违规复测。
 16. **warnings 条目新增 `code` / `params`**（2026-10-02，界面本地化配套）：`message` 仍是渲染好的英文成品、逐字未变（现有断言与脚本按它写，继续有效）；新增字段供界面按显示语言重渲染（`region "OCRAM" holds…` 这类含动态内容的告警无法整串查表翻译）。两者由 `src/types.ts` 的 `WARNING_TEMPLATES` 同一张表渲染，不会各自漂移；CLI 自身不消费新字段。
 17. **`symbols` / `diff` 折叠预留窗口 `isReserve`**（2026-10-23，ESP-IDF 多 target 审核收口）：`.ext_ram.dummy` / `.flash_rodata_dummy` / `.flash.rodata_noload` 等 NOBITS 地址窗口本就不进 flash/ram 与 treemap（`0c5186c` 起 `analyze` 侧排除），但 `symbols --top` 仍按 size 排序把它们排到第一（真实 S3 map 1.44 MB / 1.11 MB），`diff` 也会拿 `.flash.rodata_noload` 的 13 KB 行报 changed 而 totals 不动——同一份 map 的两个口径互相矛盾。现在两处与 webview 列表/Top 10 一起跳过 `isReserve`，且不设开关（占位窗口不是符号）；`totals.keptCount` 仍是解析行数（含预留行），`count` 是折叠后的行数。
+18. **`totals.reserveCount` 与行级计数对齐**（2026-10-23）：`keptCount` 含预留行，webview 页脚与 diff 的 "Symbols" 若直接用它，会显示 `17 / 23` 而其中 5 行永远不可见。`MapTotals` 新增 `reserveCount`（保留 `keptCount` 的解析行语义供 CLI 契约），页脚分母与 diff 计数均减去它；`symbols` 的 `count` 仍按折叠后口径。C6/P4 的 `irom_seg`/`drom_seg` 同址同角色，`region used` 现在按 kind 分流（code→irom、rodata/data→drom），不再把整个 flash 窗口各记一遍。

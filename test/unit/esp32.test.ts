@@ -71,6 +71,9 @@ describe('ESP32-S3 (Xtensa IDF) layout', () => {
         // 对齐填充（合成 fixture 的 dummy 合计 0x1a0）
         expect(doc.totals.kindTotals.pad).toBe(0x4);
         expect(doc.totals.fillTotal).toBe(0x4);
+        // keptCount 含预留行；reserveCount 单独记，供行级视图扣除
+        expect(doc.totals.reserveCount).toBe(5);
+        expect(doc.totals.keptCount - doc.totals.reserveCount).toBe(18);
         const noload = doc.symbols.find((s) => s.outSection === '.flash.rodata_noload')!;
         expect(noload.kind).toBe('rodata');
         expect(noload.isReserve).toBe(true);

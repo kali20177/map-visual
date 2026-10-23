@@ -70,12 +70,17 @@ const FLASH_NAME_RE = /(flash|rom|itcm)/i;
 // `rtc_slow_seg` / `rtc_reserved_seg`, which no other family matches.
 const RAM_NAME_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|rtc|data)/i;
 
+/** Runtime home for a kind: data/bss live in RAM, code/rodata in the flash windows. */
+function preferRole(kind: SymbolKind): 'flash' | 'ram' {
+    return kind === 'data' || kind === 'bss' ? 'ram' : 'flash';
+}
+
 /** Sum of the kept, non-fill rows of one kind per region (VMA). */
 function kindMass(regions: MemoryRegion[], symbols: SymbolRecord[], kind: SymbolKind): Map<MemoryRegion, number> {
-    // Data/bss live in RAM; code/rodata in the flash windows. The preference
-    // only matters for same-address aliases, where the row belongs to the
-    // region matching its runtime home.
-    const prefer: 'flash' | 'ram' = kind === 'data' || kind === 'bss' ? 'ram' : 'flash';
+    // The preference only resolves aliases whose roles are already known
+    // (IDF's name table runs before the mass anchors); a pair that is still
+    // all-other falls back to declaration order.
+    const prefer = preferRole(kind);
     const mass = new Map<MemoryRegion, number>();
     for (const s of symbols) {
         if (s.status !== 'kept' || s.isFill || s.isReserve || s.kind !== kind || s.size <= 0) {
@@ -178,7 +183,7 @@ export function assignRegionRoles(regions: MemoryRegion[], symbols: SymbolRecord
 const RESERVE_SECTION_RE = /(?:^|[._-])(?:dummy|noload|text_end|heap_start|(?:dram0|iram0)\.end)$/i;
 
 /** Flag rows whose output section only reserves address space. */
-export function markReserveRows(symbols: SymbolRecord[]): void {
+function markReserveRows(symbols: SymbolRecord[]): void {
     for (const sym of symbols) {
         sym.isReserve =
             sym.status === 'kept' && sym.outSection != null && RESERVE_SECTION_RE.test(sym.outSection);
@@ -200,7 +205,7 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     if (kind === 'meta') {
         return [];
     }
-    const vmaRegion = regionFor(regions, sym.addr, kind === 'data' || kind === 'bss' ? 'ram' : 'flash');
+    const vmaRegion = regionFor(regions, sym.addr, preferRole(kind));
     // the load image lives in flash; on an aliased window prefer the flash role
     const lmaRegion = sym.lma != null ? regionFor(regions, sym.lma, 'flash') : undefined;
 
@@ -255,6 +260,31 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
     return ['flash'];
 }
 
+/**
+ * ESP32-C6/P4 map IROM and DROM to the same virtual window (`irom_seg` and
+ * `drom_seg` share 0x42000020). Flash/RAM totals count each row once, but
+ * per-region usage would otherwise add the whole window to both aliases.
+ * When two regions are exact same-window aliases with the same role AND the
+ * names identify the pair (IROM/DROM), give the row to the window named for
+ * its kind: code → IROM, rodata/data → DROM. Other vendors' aliases (Zephyr's
+ * RAM/SRAM0) have no such naming, so both keep their previous counts.
+ */
+function ownsAliasWindow(region: MemoryRegion, hits: MemoryRegion[], kind: SymbolKind): boolean {
+    const roleStorage: Storage = region.role === 'ram' ? 'ram' : 'flash';
+    const aliases = hits.filter(
+        (r) =>
+            (r.role === 'ram' ? 'ram' : 'flash') === roleStorage &&
+            r.origin === region.origin &&
+            r.length === region.length,
+    );
+    if (aliases.length <= 1) {
+        return true;
+    }
+    const hint = kind === 'code' || kind === 'other' ? /irom/i : /drom/i;
+    const owner = aliases.find((r) => hint.test(r.name));
+    return owner ? owner === region : true;
+}
+
 export function computeStorageAndTotals(doc: MapDocument): MapTotals {
     const { regions, symbols } = doc;
     // Self-contained for direct callers (tests, future MCP): reserve marking
@@ -266,6 +296,7 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
     let keptCount = 0;
     let discardedCount = 0;
     let fillTotal = 0;
+    let reserveCount = 0;
 
     for (const sym of symbols) {
         sym.storage = computeStorage(sym, regions);
@@ -278,6 +309,7 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
         // their own; counting them would report 2.6 MB of ESP-IDF dummy
         // fills as pad and swamp the composition bar.
         if (sym.isReserve) {
+            reserveCount++;
             continue;
         }
         kindTotals[sym.kind] += sym.size;
@@ -292,27 +324,36 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
         }
     }
 
-    const regionUsage = regions.map((region) => {
-        const roleStorage: Storage = region.role === 'ram' ? 'ram' : 'flash';
-        let used = 0;
-        for (const sym of symbols) {
-            if (sym.status !== 'kept') {
-                continue;
-            }
-            const vmaIn = sym.addr >= region.origin && sym.addr < region.origin + region.length;
-            const lmaIn = sym.lma != null && sym.lma >= region.origin && sym.lma < region.origin + region.length;
+    // Per-row loop keeps the alias decision local: a row may claim one RAM
+    // region (VMA) and one flash region (load image), but exact same-window
+    // aliases must not claim the same bytes twice.
+    const usedBy = new Map<MemoryRegion, number>(regions.map((r) => [r, 0]));
+    for (const sym of symbols) {
+        if (sym.status !== 'kept') {
+            continue;
+        }
+        const vmaHits = regionsAt(regions, sym.addr);
+        const lmaHits = sym.lma != null ? regionsAt(regions, sym.lma) : [];
+        for (const region of regions) {
+            const roleStorage: Storage = region.role === 'ram' ? 'ram' : 'flash';
+            const vmaIn = vmaHits.includes(region);
+            const lmaIn = lmaHits.includes(region);
             // zero-init sections echo a load address too — only count a symbol
             // into a region when its storage actually claims that kind
             if (vmaIn && sym.storage.includes(roleStorage)) {
-                used += sym.size;
+                if (ownsAliasWindow(region, vmaHits, sym.kind)) {
+                    usedBy.set(region, usedBy.get(region)! + sym.size);
+                }
             } else if (!vmaIn && lmaIn && sym.storage.includes('flash')) {
-                used += sym.size;
+                if (ownsAliasWindow(region, lmaHits, sym.kind)) {
+                    usedBy.set(region, usedBy.get(region)! + sym.size);
+                }
             }
         }
-        return { region, used };
-    });
+    }
+    const regionUsage = regions.map((region) => ({ region, used: usedBy.get(region)! }));
 
-    return { flash, ram, keptCount, discardedCount, fillTotal, kindTotals, regions: regionUsage };
+    return { flash, ram, keptCount, discardedCount, fillTotal, reserveCount, kindTotals, regions: regionUsage };
 }
 
 /** Convenience for the pipeline: mutates doc with roles + storage + totals. */

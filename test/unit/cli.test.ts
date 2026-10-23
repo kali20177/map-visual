@@ -24,6 +24,7 @@ interface TotalsJson {
     ram: number;
     keptCount: number;
     discardedCount: number;
+    reserveCount: number;
     kindTotals: Record<string, number>;
     regions: { name: string; used: number; usage: number }[];
 }
@@ -183,7 +184,7 @@ describe('cli symbols — filtering and sorting', () => {
         // 最大的真实行是 32 B 的 .bss.buf —— 被折叠的预留行是 0x100/0x60/0x40
         expect(j.symbols[0]).toMatchObject({ name: 'buf', size: 32 });
         // 解析结果本身不变：kept 23 = 17 行 + 5 个预留行 + 1 个 meta 行
-        expect(j.count).toBe(j.totals.keptCount - 5 - 1);
+        expect(j.count).toBe(j.totals.keptCount - j.totals.reserveCount - 1);
     });
 
     it('--filter matches mangled and demangled names', async () => {
@@ -439,7 +440,7 @@ LOAD main.o
     });
 
     it('loose fill before any output section falls back to an empty section key and warns', async () => {
-        // 22 份语料没有 loose fill —— 回落分支（outSection ?? section）靠合成探针守卫
+        // 复核当时 22 份语料没有 loose fill —— 回落分支（outSection ?? section）靠合成探针守卫
         const map = write('headerless.map', `${HEADER} *fill*         0x08000000       0x8
 .data           0x20000000       0x10
  *(.data)
