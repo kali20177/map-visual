@@ -102,6 +102,8 @@ const enum State {
     Discarded,
     MemoryConfig,
     MainMap,
+    /** `--cref` tail: symbol → file table, no memory-map content. */
+    CrossReference,
 }
 
 export function parseObjectField(raw: string): { archive: string | null; member: string | null } {
@@ -188,6 +190,7 @@ function baseRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 's
         lma: null,
         storage: [],
         isFill: false,
+        isReserve: false,
         isSystem: false,
         isLto: false,
         outSection: null,
@@ -395,32 +398,63 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                     Number(bearingSymbols(b.u)) - Number(bearingSymbols(a.u)) ||
                     a.idx - b.idx,
             );
+        // Iterative DFS over the vma-ordered candidates. The recursive form
+        // died on ESP-IDF maps: depth equals the number of contributions in
+        // the section and `.flash.text` alone carries 14k+ of them (V8's
+        // main-thread stack is ~10k frames), while `[...acc, u]` copied the
+        // whole path every step (O(n²)). Backtracking only matters for
+        // same-VMA candidates (stale LTO re-prints), so a frame is pushed
+        // only when a sibling candidate exists — a lone candidate can never
+        // be re-chosen.
+        // The budget counts backtracks instead of placements: a clean chain
+        // costs nothing regardless of section size, while a pathological
+        // ambiguous layout still stops after 20k retries.
         const budget = { visits: 20000 };
         let budgetExhausted = false;
-        const search = (cursor: number, from: number, acc: OutUnit[]): OutUnit[] | null => {
+        const path: OutUnit[] = [];
+        const frames: { next: number; cursor: number }[] = [];
+        let cursor = start;
+        let i = 0;
+        let chain: OutUnit[] | null = null;
+        for (;;) {
             if (cursor === end) {
-                return acc;
+                chain = path;
+                break;
             }
-            if (budget.visits-- <= 0) {
-                budgetExhausted = true;
-                return null;
-            }
-            for (let i = from; i < viable.length; i++) {
+            let pick = -1;
+            for (; i < viable.length; i++) {
                 const v = unitVma(viable[i].u);
                 if (v < cursor) {
                     continue;
                 }
                 if (v > cursor) {
-                    return null; // vma-ordered: nothing can fill the gap
+                    break; // vma-ordered: nothing can fill the gap
                 }
-                const found = search(cursor + unitSize(viable[i].u), i + 1, [...acc, viable[i].u]);
-                if (found) {
-                    return found;
-                }
+                pick = i;
+                break;
             }
-            return null;
-        };
-        const chain = search(start, 0, []);
+            if (pick >= 0) {
+                if (pick + 1 < viable.length && unitVma(viable[pick + 1].u) === cursor) {
+                    frames.push({ next: pick + 1, cursor });
+                }
+                path.push(viable[pick].u);
+                cursor += unitSize(viable[pick].u);
+                i = pick + 1;
+                continue;
+            }
+            // No unit starts at cursor — this branch is a dead end.
+            if (frames.length === 0) {
+                break;
+            }
+            if (budget.visits-- <= 0) {
+                budgetExhausted = true;
+                break;
+            }
+            const frame = frames.pop()!;
+            path.pop();
+            cursor = frame.cursor;
+            i = frame.next;
+        }
         if (!chain) {
             tilingFallbacks++;
             if (budgetExhausted) {
@@ -561,6 +595,15 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                         currentSectionHeader = '/DISCARD/';
                         outputHeaderLine = lineNo + 1;
                         setPendingSection(null);
+                        break;
+                    }
+                    if (trimmed === 'Cross Reference Table') {
+                        // `-Wl,--cref` appends a symbol→file table after the
+                        // memory map. Its long file paths wrap onto indented
+                        // lines with no section/address, which used to surface
+                        // as unrecognizedLine noise (xiaozhi-esp32: 9 rows).
+                        closeOutSec();
+                        state = State.CrossReference;
                         break;
                     }
                     if (trimmed.startsWith('LOAD ') || trimmed.startsWith('OUTPUT(')) {
@@ -748,6 +791,11 @@ export function parseGnuLd(text: string, warnings: Warnings): { regions: MemoryR
                 }
 
                 warnings.add('unrecognizedLine', { sample: line.trim(), line: lineNo + 1 });
+                break;
+            }
+
+            case State.CrossReference: {
+                // no memory-map content after the --cref header
                 break;
             }
         }

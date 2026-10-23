@@ -24,6 +24,7 @@ function sym(partial: Partial<SymbolRecord>): SymbolRecord {
         storage: [],
         status: 'kept',
         isFill: false,
+        isReserve: false,
         fromSectionName: false,
         isSystem: false,
         isLto: false,
@@ -49,6 +50,53 @@ describe('region role assignment', () => {
         expect(regions[0].role).toBe('ram');
         expect(regions[1].role).toBe('flash');
         expect(regions[2].role).toBe('other');
+    });
+
+    it('trusts IDF segment names when IRAM code outweighs IROM (classic ESP32)', () => {
+        // 真实 hello_world ESP32：IRAM 51.7 KB > IROM 47.4 KB —— 纯 code
+        // 质量投票会把 iram0_0_seg 判成 flash、iram0_2_seg 判成 ram。
+        const regions = [
+            region('iram0_0_seg', 0x40080000, 0x20000),
+            region('iram0_2_seg', 0x400d0020, 0x330000),
+            region('dram0_0_seg', 0x3ffb0000, 0x2c200),
+            region('drom0_0_seg', 0x3f400020, 0x3fffe0),
+        ];
+        assignRegionRoles(regions, [
+            sym({ addr: 0x40080100, kind: 'code', size: 0x50 }),
+            sym({ addr: 0x400d0100, kind: 'code', size: 0x40 }),
+            sym({ addr: 0x3ffb0100, kind: 'bss', size: 0x10 }),
+        ]);
+        expect(regions.map((r) => r.role)).toEqual(['ram', 'flash', 'ram', 'flash']);
+    });
+
+    it('keeps drom0_0 flash when .ext_ram.bss shares its window (S3 SPIRAM)', () => {
+        // extern_ram_seg 与 drom0_0_seg 同址：坏角色会让 bss 质量把 drom 锚成
+        // ram，并让一块 PSRAM BSS 在 drom/extern 两个 region 里重复计入。
+        const regions = [
+            region('drom0_0_seg', 0x3c000020, 0x2000000),
+            region('extern_ram_seg', 0x3c000020, 0x2000000),
+            region('dram0_0_seg', 0x3fc88000, 0x53700),
+        ];
+        const symbols = [
+            sym({ name: 'ro', kind: 'rodata', addr: 0x3c010120, size: 0x20 }),
+            sym({ name: 'ext', kind: 'bss', addr: 0x3c020000, size: 0x40 }),
+            sym({ name: 'int', kind: 'bss', addr: 0x3fc88000, size: 0x10 }),
+        ];
+        assignRegionRoles(regions, symbols);
+        expect(regions.map((r) => r.role)).toEqual(['flash', 'ram', 'ram']);
+        const doc = {
+            format: 'gnu-ld',
+            file: 't',
+            regions,
+            symbols,
+            totals: { flash: 0, ram: 0, keptCount: 0, discardedCount: 0, fillTotal: 0, kindTotals: { code: 0, rodata: 0, data: 0, bss: 0, meta: 0, pad: 0, other: 0 }, regions: [] },
+            warnings: [],
+        } as unknown as MapDocument;
+        const totals = computeStorageAndTotals(doc);
+        expect(totals.flash).toBe(0x20);
+        expect(totals.ram).toBe(0x50);
+        const used = Object.fromEntries(totals.regions.map((r) => [r.region.name, r.used]));
+        expect(used).toEqual({ drom0_0_seg: 0x20, extern_ram_seg: 0x40, dram0_0_seg: 0x10 });
     });
 });
 

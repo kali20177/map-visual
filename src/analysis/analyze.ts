@@ -8,10 +8,96 @@ function regionOf(regions: MemoryRegion[], addr: number): MemoryRegion | undefin
 }
 
 /**
+ * ESP-IDF's segment names are canonical across targets and are stronger
+ * evidence than content mass: `iram0_2_seg` is the IROM window despite its
+ * name, and a small app can legitimately carry more IRAM code than IROM
+ * code (classic ESP32 hello_world: 51.7 KB IRAM vs 47.4 KB IROM), which
+ * makes a pure code-mass vote call IRAM flash. Exact names only — other
+ * vendors' regions still go through the content anchors.
+ */
+const IDF_REGION_ROLES: Readonly<Record<string, 'flash' | 'ram'>> = {
+    iram0_0_seg: 'ram',
+    iram0_2_seg: 'flash',
+    irom0_0_seg: 'flash',
+    dram0_0_seg: 'ram',
+    drom0_0_seg: 'flash',
+    rtc_iram_seg: 'ram',
+    rtc_data_seg: 'ram',
+    rtc_slow_seg: 'ram',
+    rtc_reserved_seg: 'ram',
+    rtc_fast_reserved_seg: 'ram',
+    rtc_slow_reserved_seg: 'ram',
+    extern_ram_seg: 'ram',
+};
+
+/** Region-name families used when the content anchors leave a region open. */
+const FLASH_NAME_RE = /(flash|rom|itcm)/i;
+// `rtc` is RAM too (RTC slow/fast memory); ESP-IDF names its segments
+// `rtc_slow_seg` / `rtc_reserved_seg`, which no other family matches.
+const RAM_NAME_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|rtc|data)/i;
+
+/** Sum of the kept, non-fill rows of one kind per region (VMA). */
+function kindMass(regions: MemoryRegion[], symbols: SymbolRecord[], kind: SymbolKind): Map<MemoryRegion, number> {
+    const mass = new Map<MemoryRegion, number>();
+    for (const s of symbols) {
+        if (s.status !== 'kept' || s.isFill || s.isReserve || s.kind !== kind || s.size <= 0) {
+            continue;
+        }
+        const region = regionOf(regions, s.addr);
+        if (region) {
+            mass.set(region, (mass.get(region) ?? 0) + s.size);
+        }
+    }
+    return mass;
+}
+
+/** Give `role` to the region carrying the most of `kind`, if still open. */
+function anchorByMass(
+    regions: MemoryRegion[],
+    symbols: SymbolRecord[],
+    kind: SymbolKind,
+    role: 'flash' | 'ram',
+): void {
+    const mass = kindMass(regions, symbols, kind);
+    let best: MemoryRegion | undefined;
+    let bestSize = 0;
+    let bestNameMatch = false;
+    // Tie-break: a region whose name matches the role wins over an anonymous
+    // one; otherwise regions order keeps the verdict stable. Regions already
+    // settled (IDF names) are never candidates — an anchor may pick the
+    // largest code region even when that region is the RAM alias holding
+    // BT/IRAM code.
+    for (const r of regions) {
+        if (r.role !== 'other') {
+            continue;
+        }
+        const size = mass.get(r) ?? 0;
+        if (size <= 0) {
+            continue;
+        }
+        const nameMatch = role === 'flash' ? FLASH_NAME_RE.test(r.name) : RAM_NAME_RE.test(r.name);
+        if (size > bestSize || (size === bestSize && nameMatch && !bestNameMatch)) {
+            best = r;
+            bestSize = size;
+            bestNameMatch = nameMatch;
+        }
+    }
+    if (best && best.role === 'other') {
+        best.role = role;
+    }
+}
+
+/**
  * Decide the flash/ram role of each Memory Configuration region.
- * Anchors beat names: the region holding the first .text (code) is flash,
- * the one holding the first .bss is ram; remaining regions fall back to
+ * Anchors beat names: the region carrying the most .text (code) is flash,
+ * the one carrying the most .bss is ram; remaining regions fall back to
  * conventional naming (FLASH/ROM vs RAM/SRAM/DTCM/...).
+ *
+ * Mass beats "first row" because maps print sections in script order, not
+ * by importance: ESP-IDF prints `.iram0.vectors`/`.iram0.text` (real IRAM,
+ * 100 KB) before `.flash.text` (IROM, >1 MB), so a first-code anchor pinned
+ * IRAM as flash and let the name fallback call the `iram0_2_seg` IROM
+ * window ram — both roles inverted.
  */
 export function assignRegionRoles(regions: MemoryRegion[], symbols: SymbolRecord[]): void {
     for (const r of regions) {
@@ -20,33 +106,48 @@ export function assignRegionRoles(regions: MemoryRegion[], symbols: SymbolRecord
     if (regions.length === 0) {
         return;
     }
-    const firstCode = symbols.find((s) => s.status === 'kept' && s.kind === 'code' && !s.isFill);
-    const firstBss = symbols.find((s) => s.status === 'kept' && s.kind === 'bss' && !s.isFill);
-    const anchor = (sym: SymbolRecord | undefined, role: 'flash' | 'ram'): void => {
-        if (!sym) {
-            return;
+    for (const r of regions) {
+        const role = IDF_REGION_ROLES[r.name];
+        if (role) {
+            r.role = role;
         }
-        const region = regionOf(regions, sym.addr);
-        if (region && region.role === 'other') {
-            region.role = role;
-        }
-    };
-    anchor(firstCode, 'flash');
-    anchor(firstBss, 'ram');
+    }
+    anchorByMass(regions, symbols, 'code', 'flash');
+    anchorByMass(regions, symbols, 'bss', 'ram');
     for (const r of regions) {
         if (r.role !== 'other') {
             continue;
         }
-        if (/(flash|rom|itcm)/i.test(r.name)) {
+        if (FLASH_NAME_RE.test(r.name)) {
             r.role = 'flash';
-        } else if (/(ram|sram|dtcm|dram|aon|psram|sdram|ocram|data)/i.test(r.name)) {
+        } else if (RAM_NAME_RE.test(r.name)) {
             r.role = 'ram';
         }
     }
 }
 
+/**
+ * Output-section names whose whole extent is a placeholder address window,
+ * not image content. ESP-IDF's linker script parks them at the start of the
+ * MMU windows: `.flash_rodata_dummy` / `.ext_ram.dummy` even overlap at
+ * 0x3c000020 (they alias the same window for different mappings) and the
+ * ELF marks all of them NOBITS. The names are conventional and terminal
+ * (`...dummy`, `...noload`, `...text_end`, `...heap_start`, `.iram0.end`)
+ * — matching a mere token keeps real input sections like
+ * `.text.z_dummy_thread_init` out.
+ */
+const RESERVE_SECTION_RE = /(?:^|[._-])(?:dummy|noload|text_end|heap_start|(?:dram0|iram0)\.end)$/i;
+
+/** Flag rows whose output section only reserves address space. */
+export function markReserveRows(symbols: SymbolRecord[]): void {
+    for (const sym of symbols) {
+        sym.isReserve =
+            sym.status === 'kept' && sym.outSection != null && RESERVE_SECTION_RE.test(sym.outSection);
+    }
+}
+
 function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
-    if (sym.status === 'discarded') {
+    if (sym.status === 'discarded' || sym.isReserve) {
         return [];
     }
     // Fills parse as kind 'pad' but their bytes belong to the enclosing
@@ -85,6 +186,20 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
         }
         return set.size > 0 ? [...set] : ['ram'];
     }
+    // Initialized code/rodata living in a RAM region still has a load image:
+    // ESP-IDF's IRAM code and DRAM-resident rodata are copied out of flash,
+    // and its map prints no LMA for them (the ELF carries it in PT_LOAD).
+    // This mirrors the `.data` branch above — following the VMA alone would
+    // report the 1 MB IROM sibling correctly but leave 100 KB+ of IRAM code
+    // out of flash while still claiming it as ram.
+    if ((kind === 'code' || kind === 'rodata') && vmaRegion?.role === 'ram') {
+        const set = new Set<Storage>();
+        if (lmaRegion ? lmaRegion.role === 'flash' : true) {
+            set.add('flash');
+        }
+        set.add('ram');
+        return [...set];
+    }
     // code / rodata / other / pad — follow the VMA region
     if (vmaRegion) {
         // a downgraded region (see finalize) holds no allocatable content —
@@ -102,6 +217,9 @@ function computeStorage(sym: SymbolRecord, regions: MemoryRegion[]): Storage[] {
 
 export function computeStorageAndTotals(doc: MapDocument): MapTotals {
     const { regions, symbols } = doc;
+    // Self-contained for direct callers (tests, future MCP): reserve marking
+    // only needs the row's own output section, never a prior pass.
+    markReserveRows(symbols);
     const kindTotals = EMPTY_KIND_TOTALS();
     let flash = 0;
     let ram = 0;
@@ -116,6 +234,12 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
             continue;
         }
         keptCount++;
+        // Placeholder windows tile an address range but hold no bytes of
+        // their own; counting them would report 2.6 MB of ESP-IDF dummy
+        // fills as pad and swamp the composition bar.
+        if (sym.isReserve) {
+            continue;
+        }
         kindTotals[sym.kind] += sym.size;
         if (sym.isFill) {
             fillTotal += sym.size;
@@ -153,6 +277,9 @@ export function computeStorageAndTotals(doc: MapDocument): MapTotals {
 
 /** Convenience for the pipeline: mutates doc with roles + storage + totals. */
 export function finalize(doc: MapDocument, warnings?: Warnings): MapDocument {
+    // Mark placeholder windows before the role/downgrade passes so their
+    // rows never look like evidence that a region holds storage content.
+    markReserveRows(doc.symbols);
     assignRegionRoles(doc.regions, doc.symbols);
     downgradeContentlessRegions(doc.regions, doc.symbols);
     if (warnings) {
@@ -163,12 +290,16 @@ export function finalize(doc: MapDocument, warnings?: Warnings): MapDocument {
 }
 
 // Same name families the name fallback uses — a strong mismatch between what
-// the content anchors decided and what the region is called means the single
-// anchor misfired (e.g. code linked to run from RAM lands first). `itcm` is
-// deliberately not in the flash set here: anchoring it to ram is physically
-// right, so neither direction should warn.
+// the content anchors decided and what the region is called means the mass
+// anchor misfired (e.g. the largest code region is RAM that executes in
+// place). `itcm` is deliberately not in the flash set here: anchoring it to
+// ram is physically right, so neither direction should warn.
 const FLASH_CONFLICT_RE = /(flash|rom)/i;
-const RAM_CONFLICT_RE = /(ram|sram|dtcm|dram|aon|psram|sdram|ocram|data)/i;
+// `(?<![i])ram` keeps Xtensa's `iram0_2_seg` out: ESP-IDF historically names
+// the IROM (flash instruction window, 0x42000000) `iram0_2_seg`, so a flash
+// verdict there is the documented layout, not a swapped pair. Plain `iram`
+// regions still classify as ram via RAM_NAME_RE.
+const RAM_CONFLICT_RE = /(sram|dtcm|dram|aon|psram|sdram|ocram|rtc|data|(?<![i])ram)/i;
 
 /**
  * Cross-check the content anchors against region names. The anchor logic is
@@ -203,7 +334,9 @@ function downgradeContentlessRegions(regions: MemoryRegion[], symbols: SymbolRec
     const storageKinds = new Set<SymbolKind>(['code', 'rodata', 'data', 'bss']);
     const inRegion = (addr: number, r: MemoryRegion): boolean => addr >= r.origin && addr < r.origin + r.length;
     const reaches = (s: SymbolRecord, r: MemoryRegion): boolean =>
-        s.status === 'kept' && (inRegion(s.addr, r) || (s.lma != null && inRegion(s.lma, r)));
+        s.status === 'kept' &&
+        !s.isReserve &&
+        (inRegion(s.addr, r) || (s.lma != null && inRegion(s.lma, r)));
     const holdsStorage = (s: SymbolRecord, r: MemoryRegion): boolean => {
         const kind = s.isFill ? classifySection(s.section) : s.kind;
         return storageKinds.has(kind) && reaches(s, r);

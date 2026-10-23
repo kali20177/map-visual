@@ -63,6 +63,7 @@ describe('buildGroups', () => {
         storage: ['flash'],
         status: 'kept',
         isFill: false,
+        isReserve: false,
         fromSectionName: false,
         isSystem: false,
         isLto: false,
@@ -96,5 +97,17 @@ describe('buildGroups', () => {
         );
         expect(groups.length).toBe(1);
         expect(groups[0].items.length).toBe(1);
+    });
+
+    it('skips placeholder (reserve) windows', () => {
+        const groups = buildGroups(
+            [
+                sym({ name: 'code', size: 30, outSection: '.flash.text' }),
+                sym({ name: '*fill*', size: 4096, isFill: true, isReserve: true, outSection: '.ext_ram.dummy' }),
+            ],
+            (s) => s.outSection!,
+        );
+        expect(groups.map((g) => g.key)).toEqual(['.flash.text']);
+        expect(groups[0].size).toBe(30);
     });
 });

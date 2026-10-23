@@ -1,0 +1,78 @@
+Memory Configuration
+
+Name             Origin             Length             Attributes
+iram0_0_seg      0x40374000         0x00001000         xr
+iram0_2_seg      0x42000020         0x00100000         xr
+dram0_0_seg      0x3fc88000         0x00010000         rw
+drom0_0_seg      0x3c000020         0x00100000         r
+rtc_iram_seg     0x600fe000         0x00000100         xrw
+rtc_reserved_seg 0x600fffe8         0x00000018         rw
+rtc_slow_seg     0x50000000         0x00001000         rw
+extern_ram_seg   0x3c000020         0x00100000         xrw
+
+Linker script and memory map
+
+.rtc.force_slow
+                0x50000000 0x8
+ .rtc.force_slow.3
+                0x50000000 0x8 sleep.o
+
+.rtc_reserved   0x600fffe8 0x8
+ .rtc_timer_data_in_rtc_mem
+                0x600fffe8 0x8 esp_clk.o
+
+.iram0.vectors  0x40374000 0x10
+ .iram0.vectors 0x40374000 0x10 start.o
+                0x40374000                _vector_table
+
+.iram0.text     0x40374010 0x30
+ .text.foo      0x40374010 0x10 app.o
+                0x40374010                foo
+ .wifirxiram.55 0x40374020 0x10 wifi.o
+                0x40374020                wifi_rx
+ .literal.foo   0x40374030 0x10 app.o
+
+.dram0.dummy    0x3fc88000 0x40
+ *fill*         0x3fc88000 0x40
+
+.dram0.data     0x3fc88040 0x20
+ .data.var      0x3fc88040 0x8 app.o
+                0x3fc88040                var_a
+ .rodata.cache  0x3fc88048 0x18 hal.o
+                0x3fc88048                cache_lut
+
+.dram0.bss      0x3fc88060 0x20
+ .bss.buf       0x3fc88060 0x20 app.o
+                0x3fc88060                buf
+
+.flash.text     0x42000020 0x48
+ .text.main     0x42000020 0x20 app.o
+                0x42000020                main
+ .text.helper   0x42000040 0x20 app.o
+                0x42000040                helper
+ .wifiextrairam.4 0x42000060 0x4 wifi.o
+ .wifislpiram.38  0x42000064 0x4 wifi.o
+
+.flash_rodata_dummy
+                0x3c000020 0x60
+ *fill*         0x3c000020 0x50
+ *fill*         0x3c000070 0x10
+
+.flash.appdesc  0x3c000080 0x10
+ .rodata_desc   0x3c000080 0x10 app.o
+                0x3c000080                esp_app_desc
+
+.flash.rodata   0x3c000090 0x20
+ .rodata.str1.1 0x3c000090 0x10 app.o
+ *fill*         0x3c0000a0 0x4
+ .rodata.tab    0x3c0000a4 0xc app.o
+                0x3c0000a4                tab
+
+.flash.rodata_noload 0x3c0000b0 0x8
+ .rodata_wlog_debug.1 0x3c0000b0 0x8 wifi.o
+
+.ext_ram.dummy  0x3c000020 0x100
+ *fill*         0x3c000020 0x100
+
+.xt.prop        0x00000000 0x10
+ .xt.prop       0x00000000 0x10 app.o

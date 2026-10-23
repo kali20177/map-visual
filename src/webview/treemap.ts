@@ -130,7 +130,10 @@ export interface TreemapGroup {
 export function buildGroups(rows: SymbolRecord[], groupKeyOf: (s: SymbolRecord) => string): TreemapGroup[] {
     const groups = new Map<string, TreemapGroup>();
     for (const sym of rows) {
-        if (sym.status === 'discarded' || sym.size <= 0) {
+        // placeholder address windows (`*dummy`/`*noload`) hold no bytes;
+        // including them would make 2 MB+ of ESP-IDF reservations the
+        // largest tiles in the map
+        if (sym.status === 'discarded' || sym.isReserve || sym.size <= 0) {
             continue;
         }
         const key = groupKeyOf(sym);

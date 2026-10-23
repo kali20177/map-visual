@@ -1,0 +1,67 @@
+Memory Configuration
+
+Name             Origin             Length             Attributes
+iram0_0_seg      0x40380000         0x0002eb70         xr
+iram0_2_seg      0x42000020         0x003fffe0         xr
+dram0_0_seg      0x3fca0000         0x0002eb70         rw
+drom0_0_seg      0x3c000020         0x003fffe0         r
+
+Linker script and memory map
+
+.iram0.text     0x40380000 0x20
+ .exception_vectors.text 0x40380000 0x10 start.o
+ .coexiram.3    0x40380010 0x10 libcoex.a(coex.o)
+
+.iram0.bt.text  0x40380020 0x20
+ .conn_iram1.25 0x40380020 0x10 libble_app.a(conn.o)
+ .isr_iram1.0   0x40380030 0x10 libble_app.a(isr.o)
+
+.iram0.text_end 0x40380040 0x8
+ *fill*         0x40380040 0x8
+
+.iram0.end      0x40380048 0x8
+ *fill*         0x40380048 0x8
+
+.dram0.dummy    0x3fca0000 0x10
+ *fill*         0x3fca0000 0x10
+
+.dram0.bt.data  0x3fca0010 0x10
+ .data.bt       0x3fca0010 0x10 libble_app.a(bt.o)
+                0x3fca0010                bt_data
+
+.dram0.data     0x3fca0020 0x10
+ .data.var      0x3fca0020 0x8 app.o
+                0x3fca0020                var_a
+ .data.other    0x3fca0028 0x8 app.o
+                0x3fca0028                var_b
+
+.dram0.bt.bss   0x3fca0030 0x10
+ .bss.bt        0x3fca0030 0x10 libble_app.a(bt.o)
+                0x3fca0030                bt_bss
+
+.dram0.bss      0x3fca0040 0x20
+ .bss.buf       0x3fca0040 0x20 app.o
+                0x3fca0040                buf
+
+.dram0.heap_start 0x3fca0060 0x8
+ *fill*         0x3fca0060 0x8
+
+.flash.text     0x42000020 0x40
+ .text.main     0x42000020 0x20 app.o
+                0x42000020                main
+ .text.helper   0x42000040 0x20 app.o
+                0x42000040                helper
+
+.flash_rodata_dummy 0x3c000020 0x20
+ *fill*         0x3c000020 0x20
+
+.flash.appdesc  0x3c000040 0x10
+ .rodata_desc   0x3c000040 0x10 app.o
+                0x3c000040                esp_app_desc
+
+.flash.rodata   0x3c000050 0x20
+ .rodata.tab    0x3c000050 0x20 app.o
+                0x3c000050                tab
+
+.flash.rodata_noload 0x3c000070 0x8
+ .rodata_wlog_debug.1 0x3c000070 0x8 wifi.o

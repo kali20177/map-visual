@@ -18,6 +18,7 @@ function sym(partial: Partial<SymbolRecord>): SymbolRecord {
         storage: ['flash'],
         status: 'kept',
         isFill: false,
+        isReserve: false,
         fromSectionName: false,
         isSystem: false,
         isLto: false,

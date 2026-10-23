@@ -107,6 +107,7 @@ function makeRecord(): Omit<SymbolRecord, 'name' | 'addr' | 'size' | 'kind' | 's
         lma: null,
         storage: [],
         isFill: false,
+        isReserve: false,
         isSystem: false,
         isLto: false,
         outSection: null,

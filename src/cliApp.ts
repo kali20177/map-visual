@@ -315,7 +315,7 @@ function buildTree(doc: MapDocument, by: (typeof TREEMAP_BY)[number], depth: num
     // 无输出段上下文的行回落到 section（loose fills、discarded 列表）。
     const levels = new Map<string, Map<string, Map<string, { size: number; rows: number }>>>();
     for (const s of doc.symbols) {
-        if (s.status !== 'kept' || s.kind === 'meta') {
+        if (s.status !== 'kept' || s.kind === 'meta' || s.isReserve) {
             continue;
         }
         const k1 =

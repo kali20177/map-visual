@@ -223,8 +223,11 @@ describe('cli treemap — partition invariant', () => {
             const j = JSON.parse(r.out!) as { tree: TreeNodeJson[] };
             const treeSum = checkTree(j.tree);
             const doc = await parseFixture(rel);
+            // placeholder windows (`*dummy`/`*noload`) are excluded from the
+            // treemap just like meta: they reserve an address range but hold
+            // no image bytes (ESP-IDF keeps 2 MB+ of them)
             const expected = doc.symbols
-                .filter((s) => s.status === 'kept' && s.kind !== 'meta')
+                .filter((s) => s.status === 'kept' && s.kind !== 'meta' && !s.isReserve)
                 .reduce((a, s) => a + s.size, 0);
             expect(treeSum, rel).toBe(expected);
         }

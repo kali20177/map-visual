@@ -515,6 +515,55 @@ describe('GNU ld — real-world section forms (LTO / script-only sections)', () 
         expect(w.list()).toHaveLength(1);
         expect(w.list()[0]!.message).toContain('budget');
     });
+
+    it('tiles a very deep section without recursion or a placement budget', () => {
+        // ESP-IDF `.flash.text` shape: a single output section with 10⁴–10⁵
+        // contributions. The old recursive search died at V8's ~10k-frame
+        // stack and counted every placement against a 20k visit budget, so a
+        // deep-but-unambiguous section fell back to keep-all (with a warning)
+        // or overflowed outright. The budget now counts backtracks only.
+        const w = new Warnings();
+        const N = 30000;
+        const start = 0x1000;
+        const lines = ['Linker script and memory map', '', `.text           0x00001000       0x${(N * 4).toString(16)}`];
+        for (let i = 0; i < N; i++) {
+            const addr = (start + i * 4).toString(16);
+            lines.push(` .text.u${i}      0x${addr}        0x4 a.o`);
+            lines.push(`                0x${addr}                fn${i}`);
+        }
+        const { symbols } = parseGnuLd(lines.join('\n'), w);
+        expect(w.list()).toEqual([]);
+        expect(symbols).toHaveLength(N);
+        expect(symbols.reduce((a, s) => a + s.size, 0)).toBe(N * 4);
+        expect(symbols[N - 1].name).toBe(`fn${N - 1}`);
+    });
+
+    it('ignores the --cref cross-reference table after the memory map', () => {
+        // `-Wl,--cref` (xiaozhi-esp32) appends a symbol→file table; long file
+        // paths wrap onto indented lines without a section/address. They must
+        // not surface as unrecognizedLine noise or pollute the row list.
+        const w = new Warnings();
+        const { symbols } = parseGnuLd(
+            [
+                'Linker script and memory map',
+                '',
+                '.text           0x08000000       0x10',
+                ' .text          0x08000000       0x10 a.o',
+                '                0x08000000                main',
+                '',
+                'OUTPUT(xiaozhi.elf elf32-xtensa-le)',
+                '',
+                'Cross Reference Table',
+                '',
+                'Symbol                                            File',
+                'main                                              a.o',
+                '                                                  /very/long/path/libfoo.a(bar.o)',
+            ].join('\n'),
+            w,
+        );
+        expect(w.list()).toEqual([]);
+        expect(symbols.map((s) => s.name)).toEqual(['main']);
+    });
 });
 
 describe('GNU ld — Zephyr dot-less script sections', () => {

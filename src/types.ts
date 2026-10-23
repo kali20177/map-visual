@@ -51,6 +51,15 @@ export interface SymbolRecord {
     status: 'kept' | 'discarded';
     /** True for `*fill*` / PAD rows. */
     isFill: boolean;
+    /**
+     * Placeholder address space, not storage: `*dummy*` / `*noload*` output
+     * sections and the NOLOAD end markers `.iram0.text_end` /
+     * `.dram0.heap_start` / `.iram0.end` (ESP-IDF's `.ext_ram.dummy`,
+     * `.flash_rodata_dummy`, `.dram0.dummy`, `.flash.rodata_noload`). They
+     * tile an address window that the load image does not contain, so they
+     * claim no flash/ram and stay out of `kindTotals` and the treemap.
+     */
+    isReserve: boolean;
     /** Name was reconstructed from a mangled section name (`.text._ZN...`) rather than a symbol line. */
     fromSectionName: boolean;
     /** Heuristically flagged as compiler/runtime object (crt*.o, libgcc, newlib, ...). */
