@@ -240,12 +240,12 @@ root.innerHTML = `
       <option value="256">≥ 256 B</option>
       <option value="1024">≥ 1 K</option>
     </select>
-    <button id="mv-demangle" class="mv-toggle" title="${escapeAttr(tr('Toggle C++ demangling'))}">${escapeHtml(tr('Demangle'))}</button>
-    <button id="mv-lma" class="mv-toggle" title="${escapeAttr(tr('Show load addresses (LMA) in the Address column instead of runtime addresses (VMA)'))}">${escapeHtml(tr('LMA'))}</button>
-    <button id="mv-system" class="mv-toggle" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
-    <button id="mv-discarded" class="mv-toggle" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
-    <button id="mv-view" class="mv-toggle" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
-    <button id="mv-split" class="mv-toggle">${escapeHtml(tr('Raw'))}</button>
+    <button id="mv-demangle" class="mv-toggle" aria-pressed="false" title="${escapeAttr(tr('Toggle C++ demangling'))}">${escapeHtml(tr('Demangle'))}</button>
+    <button id="mv-lma" class="mv-toggle" aria-pressed="false" title="${escapeAttr(tr('Show load addresses (LMA) in the Address column instead of runtime addresses (VMA)'))}">${escapeHtml(tr('LMA'))}</button>
+    <button id="mv-system" class="mv-toggle" aria-pressed="false" title="${escapeAttr(tr('Hide compiler/runtime objects (crt, libgcc, libc…)'))}">${escapeHtml(tr('System'))}</button>
+    <button id="mv-discarded" class="mv-toggle" aria-pressed="false" title="${escapeAttr(tr('Show sections removed by --gc-sections'))}">${escapeHtml(tr('Removed'))}</button>
+    <button id="mv-view" class="mv-toggle" aria-pressed="false" title="${escapeAttr(tr('Toggle list / treemap view'))}">${escapeHtml(tr('Treemap'))}</button>
+    <button id="mv-split" class="mv-toggle" aria-pressed="false">${escapeHtml(tr('Raw'))}</button>
     <button id="mv-export" class="mv-btn" title="${escapeAttr(tr('Export the filtered rows as CSV'))}">CSV</button>
   </div>
   <div id="mv-body" class="mv-body">
@@ -253,11 +253,11 @@ root.innerHTML = `
     <div id="mv-side-resizer" class="mv-resizer" role="separator" aria-orientation="vertical" aria-controls="mv-summary" aria-label="${escapeAttr(tr('Resize the summary panel (arrow keys, double-click to reset)'))}" title="${escapeAttr(tr('Resize the summary panel (arrow keys, double-click to reset)'))}" tabindex="0"></div>
     <div class="mv-tablewrap">
       <div class="mv-thead" id="mv-thead"></div>
-      <div class="mv-tbody" id="mv-tbody"><div class="mv-spacer" id="mv-spacer"><div class="mv-rows" id="mv-rows"></div></div></div>
+      <div class="mv-tbody" id="mv-tbody"><div class="mv-spacer" id="mv-spacer"><div class="mv-rows" id="mv-rows"></div></div><div class="mv-empty-state" id="mv-empty" hidden></div></div>
     </div>
   </div>
   <div class="mv-footer" id="mv-footer"></div>
-  <div id="mv-toast" class="mv-toast"></div>
+  <div id="mv-toast" class="mv-toast" role="status"></div>
   </div>
   <div id="mv-errorhost" hidden></div>
 `;
@@ -275,10 +275,10 @@ const groupEl = $<HTMLSelectElement>('mv-group');
 const minSizeEl = $<HTMLSelectElement>('mv-minsize');
 const demangleEl = $<HTMLButtonElement>('mv-demangle');
 const lmaEl = $<HTMLButtonElement>('mv-lma');
-const systemEl = $('mv-system');
-const discardedEl = $('mv-discarded');
-const viewEl = $('mv-view');
-const splitEl = $('mv-split');
+const systemEl = $<HTMLButtonElement>('mv-system');
+const discardedEl = $<HTMLButtonElement>('mv-discarded');
+const viewEl = $<HTMLButtonElement>('mv-view');
+const splitEl = $<HTMLButtonElement>('mv-split');
 const exportEl = $('mv-export');
 const summaryEl = $('mv-summary');
 const bodyEl = $('mv-body');
@@ -287,6 +287,7 @@ const theadEl = $('mv-thead');
 const tbodyEl = $('mv-tbody');
 const spacerEl = $('mv-spacer');
 const rowsEl = $('mv-rows');
+const emptyEl = $('mv-empty');
 // Last html painted into `rowsEl`. Assigning innerHTML replaces every row node,
 // and the browser's double-click counter only accumulates while consecutive
 // presses land on the same node — so repaints whose html did not change must
@@ -387,6 +388,7 @@ function applySummaryWidth(): void {
 function resetCols(): void {
     state.cols = [...DEFAULT_COLS];
     applyCols();
+    theadEl.querySelectorAll<HTMLElement>('.mv-colresize').forEach((grip) => gripAriaValue(grip));
     persist();
 }
 
@@ -426,8 +428,19 @@ function renderHeader(): void {
             const active = state.ui.sortKey === key;
             const arrow = active ? (state.ui.sortDir === 'asc' ? '▲' : '▼') : '';
             // the last column has no right neighbour to trade width with
-            const grip = i < COLUMN_ORDER.length - 1 ? `<span class="mv-colresize" data-col="${i}" title="${tr('Drag to resize the column')}"></span>` : '';
-            return `<div class="mv-th mv-sortable${active ? ' active' : ''}" data-sort="${key}"><span class="mv-th-label">${escapeHtml(columnLabel(key))}<span class="mv-arrow">${arrow}</span></span>${grip}</div>`;
+            const grip =
+                i < COLUMN_ORDER.length - 1
+                    ? `<span class="mv-colresize" data-col="${i}" role="separator" aria-orientation="vertical" aria-label="${escapeAttr(tr('Resize the {0} column (arrow keys, Home/End to the edges, Enter to reset all widths)', columnLabel(key)))}" title="${escapeAttr(tr('Drag to resize the column'))}" tabindex="0"></span>`
+                    : '';
+            // A plain container with two siblings, not a button wrapping both:
+            // aria-sort is only valid on column/row headers, and role=button
+            // makes descendants presentational — it would strip the grip's
+            // separator semantics. The sort direction goes into the accessible
+            // name instead.
+            const name = active
+                ? tr('{0}, sorted {1}', columnLabel(key), state.ui.sortDir === 'asc' ? tr('ascending') : tr('descending'))
+                : tr('Sort by {0}', columnLabel(key));
+            return `<div class="mv-th${active ? ' active' : ''}"><div class="mv-th-sort mv-sortable" data-sort="${key}" role="button" tabindex="0" aria-label="${escapeAttr(name)}"><span class="mv-th-label">${escapeHtml(columnLabel(key))}<span class="mv-arrow">${arrow}</span></span></div>${grip}</div>`;
         }).join('') + `<div class="mv-gutter"></div>`;
 }
 
@@ -488,6 +501,8 @@ function renderSummary(): void {
         return;
     }
     summaryEl.style.display = '';
+    // the rebuild below drops focus to <body>; remember which summary row had it
+    const focusKey = summaryFocusKey();
     const t = doc.totals;
     const part = (label: string, used: number, total: number | null, cls: string): string => {
         const pct = total ? Math.min(100, (used / total) * 100) : null;
@@ -518,7 +533,7 @@ function renderSummary(): void {
     const kindRow = (k: SymbolKind, cls: string): string => {
         const size = t.kindTotals[k];
         const on = state.ui.kinds[k];
-        return `<div class="mv-kind-row${on ? '' : ' off'}" data-kind="${k}" role="checkbox" aria-checked="${on}" title="${escapeAttr(tr('Toggle {0} rows', k))}">
+        return `<div class="mv-kind-row${on ? '' : ' off'}" data-kind="${k}" role="checkbox" aria-checked="${on}" tabindex="0" title="${escapeAttr(tr('Toggle {0} rows', k))}">
           <span class="mv-dot mv-k-${k}"></span>${k}${cls ? ` <span class="mv-kind-note">${cls}</span>` : ''}<span class="mv-kind-size">${formatBytes(size)}</span></div>`;
     };
     // Bar and total are normalized over storage-occupying kinds, summed by
@@ -576,6 +591,31 @@ function renderSummary(): void {
       </div>
       <div class="mv-section"><div class="mv-section-title">${escapeHtml(tr('Top symbols'))}</div>${topHtml || '<div class="mv-empty">—</div>'}</div>
       ${warnHtml}`;
+    restoreSummaryFocus(focusKey);
+}
+
+/**
+ * data-kind / data-sym of the focused summary row, if any — the identity a
+ * re-render can look up again (an index would not survive a re-sorted list).
+ */
+function summaryFocusKey(): { kind?: string; sym?: string } | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || !summaryEl.contains(active)) {
+        return null;
+    }
+    const el = active.closest<HTMLElement>('[data-kind],[data-sym]');
+    if (!el) {
+        return null;
+    }
+    return el.dataset.kind != null ? { kind: el.dataset.kind } : { sym: el.dataset.sym };
+}
+
+function restoreSummaryFocus(key: { kind?: string; sym?: string } | null): void {
+    if (!key) {
+        return;
+    }
+    const sel = key.kind != null ? `[data-kind="${key.kind}"]` : `[data-sym="${key.sym}"]`;
+    (summaryEl.querySelector(sel) as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 /** Re-render a warning in the display language; the English `message` is the fallback. */
@@ -617,7 +657,9 @@ function renderRows(): void {
     spacerEl.style.height = `${Math.max(visible.length * ROW_H, tbodyEl.clientHeight)}px`;
     // count matched rows, not painted ones: a collapsed group still matched
     // (the treemap view counts the same way)
-    updateMatchChip(items.reduce((n, item) => n + (item.kind === 'row' ? 1 : item.rows.length), 0));
+    const matched = items.reduce((n, item) => n + (item.kind === 'row' ? 1 : item.rows.length), 0);
+    updateMatchChip(matched);
+    emptyEl.hidden = matched > 0;
     renderWindow();
     if (state.pendingScroll != null) {
         // constrained by the (re)computed spacer height, which is why this has
@@ -630,6 +672,8 @@ function renderRows(): void {
 }
 
 function renderWindow(): void {
+    // the replacement below drops focus to <body>; remember which row had it
+    const focused = focusedRowIndex();
     const scrollTop = tbodyEl.scrollTop;
     const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
     const end = Math.min(visible.length, Math.ceil((scrollTop + tbodyEl.clientHeight) / ROW_H) + OVERSCAN);
@@ -672,7 +716,36 @@ function renderWindow(): void {
     if (html !== rowsHtml) {
         rowsHtml = html;
         rowsEl.innerHTML = html;
+        restoreRowFocus(focused);
     }
+}
+
+/**
+ * Index of the list row that currently has focus, if any. Every repaint
+ * replaces the row nodes (`innerHTML`), which throws focus to `<body>` —
+ * `focusedRowIndex` + `restoreRowFocus` around a repaint are what keep the
+ * keyboard in the list when a click or a group toggle re-renders it.
+ */
+function focusedRowIndex(): number | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) {
+        return null;
+    }
+    const el = active.closest<HTMLElement>('[data-i]');
+    if (!el || !rowsEl.contains(el)) {
+        return null;
+    }
+    const i = parseInt(el.dataset.i!, 10);
+    return Number.isInteger(i) ? i : null;
+}
+
+function restoreRowFocus(index: number | null): void {
+    if (index == null) {
+        return;
+    }
+    // preventScroll: the restored row may sit in the overscan band outside the
+    // viewport, and refocusing it must not jerk the scroll position
+    (rowsEl.querySelector(`[data-i="${index}"]`) as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 function renderFooter(): void {
@@ -723,6 +796,7 @@ function renderTreemap(): void {
     // no collapsed groups here, so every matched row is on the screen
     shownRows = rows.length;
     updateMatchChip(rows.length);
+    emptyEl.hidden = rows.length > 0;
     const groups = buildGroups(rows.map((r) => r.sym), (s) =>
         state.ui.groupBy === 'none' ? groupKeyOf(s, 'object') : groupKeyOf(s, state.ui.groupBy),
     );
@@ -736,7 +810,7 @@ function renderTreemap(): void {
             renderTreemap();
             return;
         }
-        html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1">${escapeHtml(tr('‹ all groups'))}</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${escapeHtml(tr('{0} symbols · {1}', group.items.length, formatBytes(group.size)))}</span></div>`;
+        html += `<div class="mv-tm-crumb"><span class="mv-crumb-link" data-tm-back="1" tabindex="0" role="button">${escapeHtml(tr('‹ all groups'))}</span><span class="mv-crumb-sep">›</span><span>${escapeHtml(group.label)}</span><span class="mv-group-meta">${escapeHtml(tr('{0} symbols · {1}', group.items.length, formatBytes(group.size)))}</span></div>`;
         const rects = squarify(capItems(group.items), { x: rect.x, y: rect.y + 28, w: rect.w, h: rect.h - 28 });
         html += rects.map((r) => tmNodeHtml(r, r.key, r.label)).join('');
     } else {
@@ -766,37 +840,76 @@ function tmNodeHtml(r: { key: string; label: string; size: number; kind: SymbolK
     const showLabel = r.w > 56 && r.h > 20;
     const short = showLabel && r.w > 120 ? r.label : r.label.length > 14 ? r.label.slice(0, 13) + '…' : r.label;
     const isMore = r.key === '__more__';
+    // "+N smaller" has no action, so it stays out of the tab order
+    const focusable = isMore ? '' : ' tabindex="0" role="button"';
     return `
     <div class="mv-tm-node k-${r.kind}${isMore ? ' more' : ''}" data-tm-key="${escapeAttr(dataKey)}" data-tm-copy="${escapeAttr(r.label)}"
-         style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px" title="${escapeAttr(title)}">
+         style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px" title="${escapeAttr(title)}"${focusable} aria-label="${escapeAttr(title)}">
       ${showLabel ? `<span class="mv-tm-label">${escapeHtml(short)}${showLabel && r.w > 150 ? ` <em>${formatBytes(r.size)}</em>` : ''}</span>` : ''}
     </div>`;
 }
 
-    tbodyEl.addEventListener('click', (ev) => {
+/** Treemap activation shared by click and keyboard: a group tile drills in, a leaf copies its name. */
+function activateTmNode(node: HTMLElement): void {
+    const key = node.dataset.tmKey!;
+    if (key === '__more__') {
+        return; // "+N smaller" cells are not drillable
+    }
+    if (state.treemapGroupKey) {
+        // leaf: copy the clean symbol name (not the rendered label, which
+        // embeds the size — and not the internal key on unlabeled cells)
+        const label = node.dataset.tmCopy ?? (node.querySelector('.mv-tm-label')?.textContent ?? key).trim();
+        copyText(label);
+    } else {
+        state.treemapGroupKey = key;
+        renderTreemap();
+        // the keyboard hand-off continues from the way back
+        (rowsEl.querySelector('.mv-crumb-link') as HTMLElement | null)?.focus({ preventScroll: true });
+        persist(); // the drill-down level is part of the stored view
+    }
+}
+
+function treemapBack(): void {
+    const key = state.treemapGroupKey;
+    state.treemapGroupKey = null;
+    renderTreemap();
+    // hand focus back to the tile that was drilled into — dataset comparison,
+    // not a selector: group keys can carry quotes and backslashes
+    const tiles = Array.from(rowsEl.querySelectorAll<HTMLElement>('[data-tm-key]'));
+    (tiles.find((el) => el.dataset.tmKey === key) ?? tiles[0])?.focus({ preventScroll: true });
+    persist();
+}
+
+tbodyEl.addEventListener('click', (ev) => {
     const tmNode = (ev.target as HTMLElement).closest('[data-tm-key]') as HTMLElement | null;
     if (tmNode && state.view === 'treemap') {
-        const key = tmNode.dataset.tmKey!;
-        if (key === '__more__') {
-            return; // "+N smaller" cells are not drillable
-        }
-        if (state.treemapGroupKey) {
-            // leaf: copy the clean symbol name (not the rendered label, which
-            // embeds the size — and not the internal key on unlabeled cells)
-            const label = tmNode.dataset.tmCopy ?? (tmNode.querySelector('.mv-tm-label')?.textContent ?? key).trim();
-            void navigator.clipboard?.writeText(label).then(() => toast(tr('Copied: {0}', truncateLabel(label))));
-        } else {
-            state.treemapGroupKey = key;
-            renderTreemap();
-            persist(); // the drill-down level is part of the stored view
-        }
+        activateTmNode(tmNode);
         return;
     }
     const crumb = (ev.target as HTMLElement).closest('[data-tm-back]') as HTMLElement | null;
-    if (crumb) {
-        state.treemapGroupKey = null;
-        renderTreemap();
-        persist();
+    if (crumb && state.view === 'treemap') {
+        treemapBack();
+    }
+});
+
+// treemap tiles and the crumb are plain divs — Enter/Space run the click action
+tbodyEl.addEventListener('keydown', (ev) => {
+    if (ev.altKey || ev.ctrlKey || ev.metaKey || (ev.key !== 'Enter' && ev.key !== ' ')) {
+        return;
+    }
+    if (state.view !== 'treemap') {
+        return;
+    }
+    const target = ev.target as HTMLElement;
+    const node = target.closest<HTMLElement>('[data-tm-key]');
+    if (node) {
+        ev.preventDefault();
+        activateTmNode(node);
+        return;
+    }
+    if (target.closest('[data-tm-back]')) {
+        ev.preventDefault();
+        treemapBack();
     }
 });
 
@@ -833,11 +946,16 @@ function quoteTerm(value: string): string {
     return /\s/.test(value) ? `"${value}"` : value;
 }
 
-function setFilter(text: string): void {
-    searchEl.value = text;
-    state.ui.filterText = text;
+/** Push the search box's current text into the view — filtering and chrome only. */
+function applyFilter(): void {
+    state.ui.filterText = searchEl.value;
     syncSearchChrome();
     scheduleRender();
+}
+
+function setFilter(text: string): void {
+    searchEl.value = text;
+    applyFilter();
 }
 
 /**
@@ -856,7 +974,7 @@ function locateTopSymbol(docIndex: number): void {
         state.view = 'list';
         state.treemapGroupKey = null;
         state.pendingScroll = null;
-        viewEl.classList.toggle('on', false);
+        setToggle(viewEl, false);
         renderAll();
     }
     const items = buildView(doc, state.ui);
@@ -973,7 +1091,7 @@ function syncControls(): void {
         state.ui.minSize = 0;
         minSizeEl.value = '0';
     }
-    viewEl.classList.toggle('on', state.view === 'treemap');
+    setToggle(viewEl, state.view === 'treemap');
     syncSearchChrome();
     syncToggles();
     updateClickHint();
@@ -999,10 +1117,23 @@ function applyRestore(r: Restore): void {
 
 // ---- events ----
 
-searchEl.addEventListener('input', () => {
-    state.ui.filterText = searchEl.value;
-    syncSearchChrome();
-    scheduleRender();
+// IME-safe filtering: pinyin keystrokes must not re-filter mid-composition
+// (and Esc cancels the composition, not the query — see the Escape handler)
+let composing = false;
+searchEl.addEventListener('compositionstart', () => {
+    composing = true;
+});
+searchEl.addEventListener('compositionend', () => {
+    composing = false;
+    // Chrome commits with `input` *after* `compositionend`, Firefox before —
+    // running after both makes the final text the one that gets filtered
+    window.setTimeout(applyFilter, 0);
+});
+searchEl.addEventListener('input', (ev) => {
+    if (composing || (ev as InputEvent).isComposing) {
+        return;
+    }
+    applyFilter();
 });
 searchClearEl.addEventListener('click', () => {
     setFilter('');
@@ -1042,7 +1173,7 @@ discardedEl.addEventListener('click', () => {
 viewEl.addEventListener('click', () => {
     state.view = state.view === 'list' ? 'treemap' : 'list';
     state.treemapGroupKey = null;
-    viewEl.classList.toggle('on', state.view === 'treemap');
+    setToggle(viewEl, state.view === 'treemap');
     if (state.view === 'list') {
         // the treemap view clamped scrollTop to 0 — come back where the user was
         state.pendingScroll = listScrollTop > 0 ? listScrollTop : null;
@@ -1206,7 +1337,11 @@ theadEl.addEventListener('click', (ev) => {
     if (!th) {
         return;
     }
-    const key = th.dataset.sort as UiState['sortKey'];
+    sortBy(th.dataset.sort as UiState['sortKey']);
+});
+
+/** Toggle sort for a column (same path for header click and Enter/Space). */
+function sortBy(key: SortKey): void {
     if (state.ui.sortKey === key) {
         state.ui.sortDir = state.ui.sortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -1214,9 +1349,100 @@ theadEl.addEventListener('click', (ev) => {
         state.ui.sortDir = key === 'size' ? 'desc' : 'asc';
     }
     renderHeader();
+    // the rebuild dropped focus — put it back on the same column
+    (theadEl.querySelector(`[data-sort="${key}"]`) as HTMLElement | null)?.focus({ preventScroll: true });
     renderRows();
     renderFooter();
     persist();
+}
+
+/** Current rendered width of a gripped column, for separator aria semantics. */
+function gripAriaValue(grip: HTMLElement): void {
+    const col = parseInt(grip.dataset.col!, 10);
+    const width = theadEl.children[col]?.getBoundingClientRect().width ?? 0;
+    if (width > 0) {
+        // a focusable separator has an implicit 0–100 range — publish the real
+        // one: the px floor as min, and as max everything this column can take
+        // from its neighbour (which itself stops at the neighbour's floor —
+        // the same clamp the drag and the End key obey)
+        const right = theadEl.children[col + 1]?.getBoundingClientRect().width ?? 0;
+        const rightFloor = COL_MIN_PX[col + 1] ?? 0;
+        grip.setAttribute('aria-valuemin', String(COL_MIN_PX[col]));
+        grip.setAttribute('aria-valuemax', String(Math.round(width + Math.max(0, right - rightFloor))));
+        grip.setAttribute('aria-valuenow', String(Math.round(width)));
+    }
+}
+
+/**
+ * Keyboard counterpart of the grip drag: pixel steps trade width between the
+ * column and its right neighbour, clamped at the same floors. Home pushes the
+ * column to its floor, End takes all the slack, Enter resets every column.
+ */
+function nudgeColumn(grip: HTMLElement, key: string, large: boolean): void {
+    const col = parseInt(grip.dataset.col!, 10);
+    if (!(col >= 0 && col < state.cols.length - 1)) {
+        return;
+    }
+    const pxPerFr = colDragUnit();
+    const step = (large ? 48 : 16) / pxPerFr;
+    const leftMin = COL_MIN_PX[col] / pxPerFr;
+    const rightMin = COL_MIN_PX[col + 1] / pxPerFr;
+    let left = state.cols[col];
+    let right = state.cols[col + 1];
+    if (key === 'ArrowLeft') {
+        left -= step;
+        right += step;
+    } else if (key === 'ArrowRight') {
+        left += step;
+        right -= step;
+    } else if (key === 'Home') {
+        right += left - leftMin;
+        left = leftMin;
+    } else {
+        left += right - rightMin;
+        right = rightMin;
+    }
+    if (left < leftMin - 1e-9 || right < rightMin - 1e-9) {
+        return; // past a floor: stay put, like the drag does
+    }
+    const next = [...state.cols];
+    next[col] = Math.round(left * 100) / 100;
+    next[col + 1] = Math.round(right * 100) / 100;
+    state.cols = next;
+    applyCols();
+    gripAriaValue(grip);
+    persist();
+}
+
+theadEl.addEventListener('keydown', (ev) => {
+    if (ev.isComposing || ev.altKey || ev.ctrlKey || ev.metaKey) {
+        return;
+    }
+    const target = ev.target as HTMLElement;
+    const grip = target.closest<HTMLElement>('.mv-colresize');
+    if (grip) {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            resetCols();
+        } else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Home' || ev.key === 'End') {
+            ev.preventDefault();
+            nudgeColumn(grip, ev.key, ev.shiftKey);
+        }
+        return;
+    }
+    const th = target.closest<HTMLElement>('[data-sort]');
+    if (th && (ev.key === 'Enter' || ev.key === ' ')) {
+        ev.preventDefault();
+        sortBy(th.dataset.sort as UiState['sortKey']);
+    }
+});
+
+// a freshly focused grip advertises the width it inherited
+theadEl.addEventListener('focusin', (ev) => {
+    const grip = (ev.target as HTMLElement).closest?.('.mv-colresize') as HTMLElement | null;
+    if (grip) {
+        gripAriaValue(grip);
+    }
 });
 
 let scrollPersistTimer: number | undefined;
@@ -1418,36 +1644,74 @@ tbodyEl.addEventListener('dblclick', (ev) => {
 // ---- row context menu (M3) ----
 
 let menuEl: HTMLElement | null = null;
+/** Where focus came from when the menu opened — returned on keyboard close. */
+let menuOpener: HTMLElement | null = null;
 
 function closeMenu(): void {
+    if (menuEl && menuOpener && menuEl.contains(document.activeElement)) {
+        menuOpener.focus({ preventScroll: true });
+    }
     menuEl?.remove();
     menuEl = null;
+    menuOpener = null;
 }
 
 function openMenu(x: number, y: number, items: Array<{ label: string; action: () => void }>): void {
     closeMenu();
-    menuEl = document.createElement('div');
-    menuEl.className = 'mv-context-menu';
-    menuEl.setAttribute('role', 'menu');
-    menuEl.innerHTML = items.map((it, i) => `<div class="mv-cm-item" data-i="${i}" role="menuitem">${escapeHtml(it.label)}</div>`).join('');
-    document.body.appendChild(menuEl);
-    const rect = menuEl.getBoundingClientRect();
-    menuEl.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
-    menuEl.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+    menuOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const menu = document.createElement('div');
+    menuEl = menu;
+    menu.className = 'mv-context-menu';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = items.map((it, i) => `<div class="mv-cm-item" data-i="${i}" role="menuitem" tabindex="-1">${escapeHtml(it.label)}</div>`).join('');
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
     // the document-wide press handler closes the menu; a press *inside* it is
     // the menu's own business, and has to survive until the click lands on an item
-    menuEl.addEventListener('mousedown', (ev) => ev.stopPropagation());
-    menuEl.addEventListener('click', (ev) => {
+    menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
+    menu.addEventListener('click', (ev) => {
         const item = (ev.target as HTMLElement).closest('[data-i]') as HTMLElement | null;
         if (item) {
             closeMenu();
             items[parseInt(item.dataset.i!, 10)].action();
         }
     });
+    // opened from the keyboard (Shift+F10): arrows pick an item, Enter/Space run it,
+    // Escape closes (the document handler) and focus returns to the opener
+    menu.addEventListener('keydown', (ev) => {
+        const focusables = Array.from(menu.querySelectorAll<HTMLElement>('.mv-cm-item'));
+        const current = focusables.indexOf(document.activeElement as HTMLElement);
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            focusables[current + 1 < focusables.length ? current + 1 : 0]?.focus();
+        } else if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            focusables[current > 0 ? current - 1 : focusables.length - 1]?.focus();
+        } else if ((ev.key === 'Enter' || ev.key === ' ') && current >= 0) {
+            ev.preventDefault();
+            closeMenu();
+            items[current].action();
+        } else if (ev.key === 'Tab') {
+            // ARIA menu pattern: Tab leaves the menu. closeMenu hands focus
+            // back to the opener and the default Tab continues from there.
+            closeMenu();
+        }
+    });
+    (menu.querySelector('.mv-cm-item') as HTMLElement | null)?.focus();
+}
+
+/** Clipboard write with both outcomes user-visible: a confirmation or a failure toast. */
+function writeClipboard(text: string, announce: string): void {
+    void navigator.clipboard
+        ?.writeText(text)
+        .then(() => toast(announce))
+        .catch(() => toast(tr('Copy failed')));
 }
 
 function copyText(t: string): void {
-    void navigator.clipboard?.writeText(t).then(() => toast(tr('Copied: {0}', truncateLabel(t))));
+    writeClipboard(t, tr('Copied: {0}', truncateLabel(t)));
 }
 
 /** Shorten a value for a menu label / toast: long symbol names would blow the row up. */
@@ -1494,7 +1758,7 @@ function exportRows(rows: RowView[]): void {
 
 /** Copy a multi-row payload, reporting how many rows went rather than the text itself. */
 function copyRows(text: string, count: number): void {
-    void navigator.clipboard?.writeText(text).then(() => toast(tr('Copied {0} rows', count)));
+    writeClipboard(text, tr('Copied {0} rows', count));
 }
 
 /**
@@ -1601,25 +1865,34 @@ tbodyEl.addEventListener('contextmenu', (ev) => {
 // menu would stay up until something else closed it.
 document.addEventListener('mousedown', closeMenu);
 document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') {
+    if (ev.key !== 'Escape' || ev.isComposing) {
+        return;
+    }
+    // one Esc undoes exactly one thing — the innermost thing it can reach:
+    // a context menu, then the query, then the treemap drill-down, then the selection
+    if (menuEl) {
         closeMenu();
-        if (searchEl.value) {
-            // first Esc drops the query, a second one the selection
-            setFilter('');
-            return;
+        return;
+    }
+    if (searchEl.value) {
+        setFilter('');
+        return;
+    }
+    if (state.view === 'treemap' && state.treemapGroupKey) {
+        treemapBack();
+        return;
+    }
+    if (state.selected.size > 0) {
+        clearSelection();
+        if (state.view === 'list') {
+            renderWindow();
         }
-        if (state.selected.size > 0) {
-            clearSelection();
-            if (state.view === 'list') {
-                renderWindow();
-            }
-            persist();
-        }
+        persist();
     }
 });
 
 document.addEventListener('keydown', (ev) => {
-    if (ev.key === '/' && document.activeElement !== searchEl) {
+    if (ev.key === '/' && !ev.isComposing && document.activeElement !== searchEl) {
         ev.preventDefault();
         searchEl.focus();
         searchEl.select();
@@ -1679,7 +1952,8 @@ tbodyEl.addEventListener('keydown', (ev) => {
                 persist();
             }
         }
-    } else if (ev.key === 'Enter') {
+    } else if (ev.key === 'Enter' || ev.key === ' ') {
+        // both keys activate a role="button" row (Space must not scroll instead)
         ev.preventDefault();
         rowEl.click();
     } else if ((ev.key === 'F10' && ev.shiftKey) || ev.key === 'ContextMenu') {
@@ -1718,6 +1992,12 @@ summaryEl.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') {
         return;
     }
+    const kindRow = (ev.target as HTMLElement).closest('.mv-kind-row') as HTMLElement | null;
+    if (kindRow) {
+        ev.preventDefault();
+        kindRow.click(); // the summary click handler toggles and re-renders (focus is kept)
+        return;
+    }
     const top = (ev.target as HTMLElement).closest('.mv-top-row') as HTMLElement | null;
     if (!top) {
         return;
@@ -1726,16 +2006,22 @@ summaryEl.addEventListener('keydown', (ev) => {
     locateTopSymbol(parseInt(top.dataset.sym!, 10));
 });
 
+/** Toolbar toggles are real toggle buttons: the 'on' class paints the state, aria-pressed says it. */
+function setToggle(el: HTMLButtonElement, on: boolean): void {
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-pressed', String(on));
+}
+
 function syncToggles(): void {
-    demangleEl.classList.toggle('on', state.ui.demangle && state.demangleAvailable);
+    setToggle(demangleEl, state.ui.demangle && state.demangleAvailable);
     // without demangled names in the doc the toggle would silently do nothing
     demangleEl.disabled = !state.demangleAvailable;
     demangleEl.title = state.demangleAvailable
         ? tr('Toggle C++ demangling')
         : tr('No demangled names in this parse — enable "mapvisual.demangle" in settings and reopen');
-    lmaEl.classList.toggle('on', state.ui.showLma);
-    systemEl.classList.toggle('on', state.ui.hideSystem);
-    discardedEl.classList.toggle('on', state.ui.showDiscarded);
+    setToggle(lmaEl, state.ui.showLma);
+    setToggle(systemEl, state.ui.hideSystem);
+    setToggle(discardedEl, state.ui.showDiscarded);
 }
 
 let renderScheduled = false;
@@ -1799,6 +2085,8 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         shellEl.style.display = '';
         state.demangleAvailable = msg.doc.symbols.some((s) => s.demangled != null);
         fileEl.textContent = baseDisplay(msg.doc.file);
+        // the name itself is truncated to 240px — the tooltip carries the full path
+        fileEl.title = msg.doc.file;
         formatEl.textContent = msg.doc.format;
         syncToggles();
         renderAll();
@@ -1814,7 +2102,7 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
         footerEl.innerHTML = `<span class="mv-parsing">${escapeHtml(tr('Parsing…'))}</span>`;
     } else if (msg.type === 'splitChanged') {
         // host state is the truth (the raw pane may have been closed by hand)
-        splitEl.classList.toggle('on', msg.on);
+        setToggle(splitEl, msg.on);
     } else if (msg.type === 'rawLineMissing') {
         toast(tr('Raw line not found — the map file may have changed since parsing'));
     }
@@ -1831,5 +2119,6 @@ document.addEventListener('visibilitychange', () => {
 // the shell HTML is built fresh on every reload — replay the restored state
 // into the controls before asking the host for a parse
 syncControls();
+emptyEl.textContent = tr('No symbols match the current filters');
 
 post({ type: 'ready' });

@@ -608,6 +608,22 @@ body.mv-col-dragging {
     width: 100%;
 }
 
+/* centered "nothing matched" note when the filter empties the list or treemap;
+   sits above the (empty) rows container without catching the pointer */
+.mv-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vscode-descriptionForeground);
+    pointer-events: none;
+}
+
+.mv-empty-state[hidden] {
+    display: none;
+}
+
 .mv-rows {
     position: absolute;
     inset: 0 0 auto 0;
@@ -912,6 +928,18 @@ mark.mv-hit {
 
 .mv-empty {
     color: var(--vscode-descriptionForeground);
+}
+
+/* keyboard focus for the plain-div controls that behave like buttons/separators
+   (kind rows, sortable headers, column grips, treemap tiles, menu items) */
+.mv-kind-row:focus-visible,
+.mv-th-sort:focus-visible,
+.mv-colresize:focus-visible,
+.mv-tm-node:focus-visible,
+.mv-crumb-link:focus-visible,
+.mv-cm-item:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
 }
 
 /* ---------- context menu (M3) ---------- */

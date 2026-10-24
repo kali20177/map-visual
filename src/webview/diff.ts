@@ -25,8 +25,11 @@ const root = document.getElementById('app')!;
 root.innerHTML = `
   <div class="mv-toolbar">
     <div class="mv-fileinfo"><span id="dv-files" class="mv-file">—</span></div>
-    <input id="dv-search" class="mv-search" type="text" placeholder="${escapeAttr(tr('Filter symbols…'))}" spellcheck="false" />
-    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status${state.statuses.has(s) ? ' on' : ''}" data-status="${s}">${escapeHtml(tr(STATUS_LABELS[s]))}</button>`).join('')}
+    <div class="mv-searchwrap">
+      <input id="dv-search" class="mv-search" type="text" placeholder="${escapeAttr(tr('Filter symbols…'))}" spellcheck="false" />
+      <button id="dv-search-clear" class="mv-search-clear" type="button" title="${escapeAttr(tr('Clear the filter (Esc)'))}" aria-label="${escapeAttr(tr('Clear filter'))}">×</button>
+    </div>
+    ${STATUS_ORDER.map((s) => `<button class="mv-toggle dv-status${state.statuses.has(s) ? ' on' : ''}" data-status="${s}" aria-pressed="${state.statuses.has(s)}">${escapeHtml(tr(STATUS_LABELS[s]))}</button>`).join('')}
     <button id="dv-export" class="mv-btn" title="${escapeAttr(tr('Export the diff as CSV'))}">CSV</button>
   </div>
   <div class="mv-diff-summary" id="dv-summary"></div>
@@ -38,12 +41,14 @@ root.innerHTML = `
     <div class="mv-tbody" id="dv-tbody"><div class="mv-spacer" id="dv-spacer"><div class="mv-rows" id="dv-rows"></div></div></div>
   </div>
   <div class="mv-footer" id="dv-footer"></div>
-  <div id="dv-toast" class="mv-toast"></div>
+  <div id="dv-toast" class="mv-toast" role="status"></div>
 `;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const filesEl = $('dv-files');
 const searchEl = $<HTMLInputElement>('dv-search');
+const searchWrapEl = document.querySelector<HTMLElement>('.mv-searchwrap')!;
+const searchClearEl = $<HTMLButtonElement>('dv-search-clear');
 const summaryEl = $('dv-summary');
 const tbodyEl = $('dv-tbody');
 const spacerEl = $('dv-spacer');
@@ -52,15 +57,21 @@ const footerEl = $('dv-footer');
 const toastEl = $('dv-toast');
 
 let visible: DiffRow[] = [];
+/** Last html painted into `rowsEl`; identical repaints must not replace the row nodes. */
+let rowsHtml = '';
 
 function post(msg: WebviewToHost): void {
     vscode.postMessage(msg);
 }
 
+let toastTimer: number | undefined;
+
 function toast(text: string): void {
     toastEl.textContent = text;
     toastEl.classList.add('visible');
-    window.setTimeout(() => toastEl.classList.remove('visible'), 1400);
+    // rapid copies must restart the timer, or the first copy hides the second's toast early
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => toastEl.classList.remove('visible'), 1400);
 }
 
 function signed(n: number): string {
@@ -109,6 +120,8 @@ function render(): void {
 }
 
 function renderWindow(): void {
+    // the replacement below drops focus to <body>; remember which row had it
+    const focused = focusedRowIndex();
     const scrollTop = tbodyEl.scrollTop;
     const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
     const end = Math.min(visible.length, Math.ceil((scrollTop + tbodyEl.clientHeight) / ROW_H) + 10);
@@ -118,7 +131,7 @@ function renderWindow(): void {
         const deltaCls = r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : '';
         const objLabel = r.objectB ?? r.objectA ?? '';
         html += `
-      <div class="mv-row mv-datarow diff-${r.status}" data-i="${i}" style="top:${i * ROW_H}px">
+      <div class="mv-row mv-datarow diff-${r.status}" data-i="${i}" style="top:${i * ROW_H}px" tabindex="0" role="button" aria-label="${escapeAttr(`${r.name}, ${signed(r.delta)}, ${tr(STATUS_LABELS[r.status])}`)}">
         <div class="mv-td mv-mono mv-delta ${deltaCls}">${r.status === 'same' ? '—' : signed(r.delta)}</div>
         <div class="mv-td mv-mono">${r.status === 'added' ? '—' : formatBytes(r.sizeA)}</div>
         <div class="mv-td mv-mono">${r.status === 'removed' ? '—' : formatBytes(r.sizeB)}</div>
@@ -131,10 +144,44 @@ function renderWindow(): void {
         <div class="mv-td mv-td-object" title="${escapeAttr(objLabel)}">${escapeHtml(baseDisplay(objLabel))}</div>
       </div>`;
     }
-    rowsEl.innerHTML = html;
+    if (html !== rowsHtml) {
+        rowsHtml = html;
+        rowsEl.innerHTML = html;
+        restoreRowFocus(focused);
+    }
+}
+
+/** Index of the focused row — innerHTML replacement drops focus to <body>. */
+function focusedRowIndex(): number | null {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) {
+        return null;
+    }
+    const el = active.closest<HTMLElement>('[data-i]');
+    if (!el || !rowsEl.contains(el)) {
+        return null;
+    }
+    const i = parseInt(el.dataset.i!, 10);
+    return Number.isInteger(i) ? i : null;
+}
+
+function restoreRowFocus(index: number | null): void {
+    if (index == null) {
+        return;
+    }
+    (rowsEl.querySelector(`[data-i="${index}"]`) as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 tbodyEl.addEventListener('scroll', () => renderWindow());
+
+function copyRowName(r: DiffRow): void {
+    const label = r.name.length > 60 ? r.name.slice(0, 57) + '…' : r.name;
+    void navigator.clipboard
+        ?.writeText(r.name)
+        .then(() => toast(tr('Copied: {0}', label)))
+        .catch(() => toast(tr('Copy failed')));
+}
+
 tbodyEl.addEventListener('click', (ev) => {
     const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
     if (!rowEl) {
@@ -142,24 +189,88 @@ tbodyEl.addEventListener('click', (ev) => {
     }
     const r = visible[parseInt(rowEl.dataset.i!, 10)];
     if (r) {
-        void navigator.clipboard?.writeText(r.name).then(() => toast(tr('Copied: {0}', r.name.length > 60 ? r.name.slice(0, 57) + '…' : r.name)));
+        copyRowName(r);
     }
 });
 
-searchEl.addEventListener('input', () => {
-    state.filterText = searchEl.value;
-    render();
+// rows are plain divs — Enter/Space run the click action (copy the name)
+tbodyEl.addEventListener('keydown', (ev) => {
+    if (ev.altKey || ev.ctrlKey || ev.metaKey || (ev.key !== 'Enter' && ev.key !== ' ')) {
+        return;
+    }
+    const rowEl = (ev.target as HTMLElement).closest('.mv-datarow') as HTMLElement | null;
+    if (!rowEl) {
+        return;
+    }
+    ev.preventDefault();
+    const r = visible[parseInt(rowEl.dataset.i!, 10)];
+    if (r) {
+        copyRowName(r);
+    }
 });
+
+function syncSearchChrome(): void {
+    searchWrapEl.classList.toggle('has-text', searchEl.value.length > 0);
+}
+
+function applyFilter(): void {
+    state.filterText = searchEl.value;
+    syncSearchChrome();
+    render();
+}
+
+function setFilter(text: string): void {
+    searchEl.value = text;
+    applyFilter();
+}
+
+// IME-safe filtering: composition keystrokes must not re-filter mid-typing
+let composing = false;
+searchEl.addEventListener('compositionstart', () => {
+    composing = true;
+});
+searchEl.addEventListener('compositionend', () => {
+    composing = false;
+    // Chrome commits with `input` *after* `compositionend`, Firefox before —
+    // running after both makes the final text the one that gets filtered
+    window.setTimeout(applyFilter, 0);
+});
+searchEl.addEventListener('input', (ev) => {
+    if (composing || (ev as InputEvent).isComposing) {
+        return;
+    }
+    applyFilter();
+});
+searchClearEl.addEventListener('click', () => {
+    setFilter('');
+    searchEl.focus();
+});
+
+// `/` focuses the filter, Esc clears it (nothing else in this view owns Esc)
+document.addEventListener('keydown', (ev) => {
+    if (ev.isComposing) {
+        return;
+    }
+    if (ev.key === '/' && document.activeElement !== searchEl) {
+        ev.preventDefault();
+        searchEl.focus();
+        searchEl.select();
+    } else if (ev.key === 'Escape' && searchEl.value) {
+        setFilter('');
+    }
+});
+
 document.querySelectorAll<HTMLButtonElement>('.dv-status').forEach((btn) => {
     btn.addEventListener('click', () => {
         const s = btn.dataset.status as DiffStatus;
-        if (state.statuses.has(s)) {
-            state.statuses.delete(s);
-            btn.classList.remove('on');
-        } else {
+        const on = !state.statuses.has(s);
+        if (on) {
             state.statuses.add(s);
-            btn.classList.add('on');
+        } else {
+            state.statuses.delete(s);
         }
+        btn.classList.toggle('on', on);
+        btn.setAttribute('aria-pressed', String(on));
         render();
     });
 });

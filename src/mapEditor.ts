@@ -186,7 +186,7 @@ export class MapEditorProvider implements vscode.CustomReadonlyEditorProvider<Ma
         watcher.onDidChange(() => void parseAndSend(true));
         watcher.onDidCreate(() => void parseAndSend(true));
         watcher.onDidDelete(() => {
-            void webview.postMessage({ type: 'parseError', error: { kind: 'notfound', message: 'The map file was deleted on disk.' } });
+            void webview.postMessage({ type: 'parseError', error: { kind: 'notfound', message: vscode.l10n.t('The map file was deleted on disk.') } });
         });
         document.disposables.push(watcher);
 
